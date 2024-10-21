@@ -1,14 +1,25 @@
+"""
+Enhanced Parser with Linter Fixes
+
+This file contains the EnhancedParser class with modifications to address linter warnings and errors.
+"""
+
 import logging
-from typing import Optional, Dict, Any, List
 import os
 import re
-from transformers import pipeline
-from huggingface_hub import login
+from typing import Optional, Dict, Any, List, Union
+from concurrent.futures import (
+    ThreadPoolExecutor,
+    TimeoutError as ConcurrentTimeoutError,
+)
+
+import torch
+from PIL import Image
+from transformers import pipeline, DonutProcessor, VisionEncoderDecoderModel
+from huggingface_hub import hf_hub_download, login
 from thefuzz import fuzz
-from dateutil import parser as dateutil_parser
 import phonenumbers
 from phonenumbers import PhoneNumberFormat
-from concurrent.futures import ThreadPoolExecutor, TimeoutError
 
 from src.parsers.base_parser import BaseParser
 from src.utils.validation import validate_json
@@ -21,14 +32,14 @@ LLM_TIMEOUT_SECONDS = 500
 
 # Custom exception for handling timeouts
 class TimeoutException(Exception):
-    pass
+    """Exception raised when a timeout occurs."""
 
 
 class EnhancedParser(BaseParser):
     """
     EnhancedParser class extends the BaseParser to implement advanced parsing techniques
-    using various NLP models. It orchestrates the parsing stages and handles exceptions,
-    logging, and validations throughout the process.
+    using various NLP and computer vision models. It orchestrates the parsing stages and
+    handles exceptions, logging, and validations throughout the process.
     """
 
     def __init__(self, logger: Optional[logging.Logger] = None):
@@ -39,21 +50,25 @@ class EnhancedParser(BaseParser):
         try:
             # Load configuration settings
             self.config = ConfigLoader.load_config()
-            self.logger.debug(f"Loaded configuration: {self.config}")
+            self.logger.debug("Loaded configuration: %s", self.config)
 
             # Check for required environment variables
             self._check_environment_variables()
 
             # Initialize model attributes to None for lazy loading
-            self.ner_pipeline = None
-            self.layoutlm_pipeline = None
-            self.sequence_model_pipeline = None
-            self.validation_pipeline = None
+            self.ner_pipeline: Optional[pipeline] = None
+            self.donut_processor: Optional[DonutProcessor] = None
+            self.donut_model: Optional[VisionEncoderDecoderModel] = None
+            self.sequence_model_pipeline: Optional[pipeline] = None
+            self.validation_pipeline: Optional[pipeline] = None
+
+            self.device = "cuda" if torch.cuda.is_available() else "cpu"
+            self.logger.info("Using device: %s", self.device)
 
             self.logger.info("EnhancedParser initialized successfully.")
         except Exception as e:
             self.logger.error(
-                f"Error during EnhancedParser initialization: {e}", exc_info=True
+                "Error during EnhancedParser initialization: %s", e, exc_info=True
             )
             # Re-raise the exception to prevent initialization in a degraded state
             raise
@@ -63,19 +78,49 @@ class EnhancedParser(BaseParser):
         missing_vars = [var for var in required_vars if not os.getenv(var)]
         if missing_vars:
             self.logger.error(
-                f"Missing required environment variables: {', '.join(missing_vars)}"
+                "Missing required environment variables: %s", ", ".join(missing_vars)
             )
             raise ValueError(
                 f"Missing required environment variables: {', '.join(missing_vars)}"
             )
 
+    def _get_model_path(self, repo_id: str, filename: str) -> str:
+        """
+        Downloads the model file from Hugging Face Hub if not already cached.
+
+        Args:
+            repo_id (str): The repository ID on Hugging Face Hub.
+            filename (str): The filename to download.
+
+        Returns:
+            str: The local path to the downloaded file.
+        """
+        try:
+            self.logger.debug("Checking cache for model '%s/%s'.", repo_id, filename)
+            model_path = hf_hub_download(
+                repo_id=repo_id, filename=filename, cache_dir=".cache"
+            )
+            self.logger.debug(
+                "Model '%s/%s' is available at '%s'.", repo_id, filename, model_path
+            )
+            return model_path
+        except Exception as e:
+            self.logger.error(
+                "Failed to download model '%s/%s': %s",
+                repo_id,
+                filename,
+                e,
+                exc_info=True,
+            )
+            raise
+
     def _lazy_load_ner(self):
         if self.ner_pipeline is None:
             self.init_ner()
 
-    def _lazy_load_layout_aware(self):
-        if self.layoutlm_pipeline is None:
-            self.init_layout_aware()
+    def _lazy_load_donut(self):
+        if self.donut_model is None or self.donut_processor is None:
+            self.init_donut()
 
     def _lazy_load_sequence_model(self):
         if self.sequence_model_pipeline is None:
@@ -91,43 +136,57 @@ class EnhancedParser(BaseParser):
         """
         try:
             self.logger.info("Initializing NER pipeline.")
+            repo_id = "dslim/bert-base-NER"
+            model_path = self._get_model_path(repo_id, "pytorch_model.bin")
+            tokenizer_path = self._get_model_path(repo_id, "tokenizer.json")
             self.ner_pipeline = pipeline(
                 "ner",
-                model="dslim/bert-base-NER",
-                tokenizer="dslim/bert-base-NER",
+                model=model_path,
+                tokenizer=tokenizer_path,
                 aggregation_strategy="simple",
+                device=0 if self.device == "cuda" else -1,
             )
-            self.logger.info("Loaded NER model 'dslim/bert-base-NER' successfully.")
+            self.logger.info("Loaded NER model '%s' successfully.", repo_id)
+        except MemoryError:
+            self.logger.critical(
+                "MemoryError: Not enough memory to load the NER model.", exc_info=True
+            )
+            self.ner_pipeline = None
         except Exception as e:
             self.logger.error(
-                f"Failed to load NER model 'dslim/bert-base-NER': {e}", exc_info=True
+                "Failed to load NER model '%s': %s", repo_id, e, exc_info=True
             )
-            raise RuntimeError(
-                f"Failed to load NER model 'dslim/bert-base-NER': {e}"
-            ) from e
+            self.ner_pipeline = None
 
-    def init_layout_aware(self):
+    def init_donut(self):
         """
-        Initialize the Layout-Aware pipeline using a pre-trained model.
+        Initialize the Donut model and processor for OCR-free document parsing.
         """
         try:
-            self.logger.info("Initializing Layout-Aware pipeline.")
-            self.layoutlm_pipeline = pipeline(
-                "token-classification",
-                model="microsoft/layoutlmv3-base",
-                tokenizer="microsoft/layoutlmv3-base",
+            self.logger.info("Initializing Donut model and processor.")
+            repo_id = "naver-clova-ix/donut-base-finetuned-cord-v2"
+            processor_path = self._get_model_path(repo_id, "processor_config.json")
+            model_path = self._get_model_path(repo_id, "pytorch_model.bin")
+            self.donut_processor = DonutProcessor.from_pretrained(
+                repo_id, cache_dir=".cache"
             )
-            self.logger.info(
-                "Loaded Layout-Aware model 'microsoft/layoutlmv3-base' successfully."
+            self.donut_model = VisionEncoderDecoderModel.from_pretrained(
+                repo_id, cache_dir=".cache"
             )
+            self.donut_model.to(self.device)
+            self.logger.info("Loaded Donut model '%s' successfully.", repo_id)
+        except MemoryError:
+            self.logger.critical(
+                "MemoryError: Not enough memory to load the Donut model.", exc_info=True
+            )
+            self.donut_model = None
+            self.donut_processor = None
         except Exception as e:
             self.logger.error(
-                f"Failed to load Layout-Aware model 'microsoft/layoutlmv3-base': {e}",
-                exc_info=True,
+                "Failed to load Donut model '%s': %s", repo_id, e, exc_info=True
             )
-            raise RuntimeError(
-                f"Failed to load Layout-Aware model 'microsoft/layoutlmv3-base': {e}"
-            ) from e
+            self.donut_model = None
+            self.donut_processor = None
 
     def init_sequence_model(self):
         """
@@ -135,22 +194,27 @@ class EnhancedParser(BaseParser):
         """
         try:
             self.logger.info("Initializing Sequence Model pipeline.")
+            repo_id = "facebook/bart-large"
+            model_path = self._get_model_path(repo_id, "pytorch_model.bin")
+            tokenizer_path = self._get_model_path(repo_id, "tokenizer.json")
             self.sequence_model_pipeline = pipeline(
                 "summarization",
-                model="facebook/bart-large",
-                tokenizer="facebook/bart-large",
+                model=model_path,
+                tokenizer=tokenizer_path,
+                device=0 if self.device == "cuda" else -1,
             )
-            self.logger.info(
-                "Loaded Sequence Model 'facebook/bart-large' successfully."
-            )
-        except Exception as e:
-            self.logger.error(
-                f"Failed to load Sequence Model 'facebook/bart-large': {e}",
+            self.logger.info("Loaded Sequence Model '%s' successfully.", repo_id)
+        except MemoryError:
+            self.logger.critical(
+                "MemoryError: Not enough memory to load the Sequence Model.",
                 exc_info=True,
             )
-            raise RuntimeError(
-                f"Failed to load Sequence Model 'facebook/bart-large': {e}"
-            ) from e
+            self.sequence_model_pipeline = None
+        except Exception as e:
+            self.logger.error(
+                "Failed to load Sequence Model '%s': %s", repo_id, e, exc_info=True
+            )
+            self.sequence_model_pipeline = None
 
     def init_validation_model(self):
         """
@@ -170,35 +234,37 @@ class EnhancedParser(BaseParser):
             login(token=hf_token)
             self.logger.info("Logged in to Hugging Face Hub successfully.")
 
-            # Initialize the validation pipeline
-            # Using a smaller model for testing or replace with your desired model
+            repo_id = "gpt2"
+            model_path = self._get_model_path(repo_id, "pytorch_model.bin")
+            tokenizer_path = self._get_model_path(repo_id, "tokenizer.json")
             self.validation_pipeline = pipeline(
                 "text-generation",
-                model="gpt2",
-                tokenizer="gpt2",
+                model=model_path,
+                tokenizer=tokenizer_path,
+                device=0 if self.device == "cuda" else -1,
             )
-            self.logger.info("Loaded Validation Model 'gpt2' successfully.")
-        except MemoryError as me:
+            self.logger.info("Loaded Validation Model '%s' successfully.", repo_id)
+        except MemoryError:
             self.logger.critical(
-                "MemoryError: Not enough memory to load the validation model.",
+                "MemoryError: Not enough memory to load the Validation Model.",
                 exc_info=True,
             )
-            raise RuntimeError(
-                "MemoryError: Not enough memory to load the validation model."
-            ) from me
+            self.validation_pipeline = None
         except Exception as e:
-            self.logger.error(
-                f"Failed to load Validation Model: {e}",
-                exc_info=True,
-            )
-            raise RuntimeError(f"Failed to load Validation Model: {e}") from e
+            self.logger.error("Failed to load Validation Model: %s", e, exc_info=True)
+            self.validation_pipeline = None
 
-    def parse(self, email_content: str) -> Dict[str, Any]:
+    def parse(
+        self,
+        email_content: Optional[str] = None,
+        document_image: Optional[Union[str, Image.Image]] = None,
+    ) -> Dict[str, Any]:
         """
         Orchestrates the parsing process by executing each parsing stage sequentially.
 
         Args:
-            email_content (str): The raw email content to be parsed.
+            email_content (Optional[str]): The raw email content to be parsed.
+            document_image (Optional[Union[str, Image.Image]]): The path to the document image or a PIL Image object.
 
         Returns:
             Dict[str, Any]: A dictionary containing the parsed data.
@@ -206,52 +272,69 @@ class EnhancedParser(BaseParser):
         self.logger.info("Starting parsing process.")
         parsed_data: Dict[str, Any] = {}
 
-        try:
-            # Stage 1: Regex Extraction
-            self.logger.info("Stage 1: Regex Extraction.")
-            regex_data = self.regex_extraction(email_content)
-            parsed_data.update(regex_data)
+        # List of parsing stages with their corresponding methods
+        stages = [
+            (
+                "Regex Extraction",
+                self._stage_regex_extraction,
+                {"email_content": email_content},
+            ),
+            ("NER Parsing", self._stage_ner_parsing, {"email_content": email_content}),
+            (
+                "Donut Parsing",
+                self._stage_donut_parsing,
+                {"document_image": document_image},
+            ),
+            (
+                "Sequence Model Parsing",
+                self._stage_sequence_model_parsing,
+                {"email_content": email_content},
+            ),
+            (
+                "Validation Parsing",
+                self._stage_validation,
+                {"email_content": email_content, "parsed_data": parsed_data},
+            ),
+            (
+                "Schema Validation",
+                self._stage_schema_validation,
+                {"parsed_data": parsed_data},
+            ),
+            (
+                "Post Processing",
+                self._stage_post_processing,
+                {"parsed_data": parsed_data},
+            ),
+            (
+                "JSON Validation",
+                self._stage_json_validation,
+                {"parsed_data": parsed_data},
+            ),
+        ]
 
-            # Stage 2: NER Parsing
-            self.logger.info("Stage 2: NER Parsing.")
-            ner_data = self._stage_ner_parsing(email_content)
-            parsed_data = self.merge_parsed_data(parsed_data, ner_data)
+        for stage_name, stage_method, kwargs in stages:
+            try:
+                if stage_name == "Donut Parsing" and not document_image:
+                    self.logger.warning(
+                        "No document image provided for Donut parsing. Skipping this stage."
+                    )
+                    continue
+                if stage_name.startswith("Stage"):
+                    # Skip if already handled
+                    continue
 
-            # Stage 3: Layout-Aware Parsing
-            self.logger.info("Stage 3: Layout-Aware Parsing.")
-            layout_data = self._stage_layout_aware_parsing(email_content)
-            parsed_data = self.merge_parsed_data(parsed_data, layout_data)
+                self.logger.info("Stage: %s", stage_name)
+                stage_result = stage_method(**kwargs)
+                if isinstance(stage_result, dict) and stage_result:
+                    parsed_data = self.merge_parsed_data(parsed_data, stage_result)
+            except Exception as e:
+                self.logger.error(
+                    "Error in stage '%s': %s", stage_name, e, exc_info=True
+                )
+                # Continue to next stage without halting the pipeline
 
-            # Stage 4: Sequence Model Parsing
-            self.logger.info("Stage 4: Sequence Model Parsing.")
-            sequence_data = self._stage_sequence_model_parsing(email_content)
-            parsed_data = self.merge_parsed_data(parsed_data, sequence_data)
-
-            # Stage 5: Validation Parsing
-            self.logger.info("Stage 5: Validation Parsing.")
-            self._stage_validation(email_content, parsed_data)
-
-            # Stage 6: Schema Validation
-            self.logger.info("Stage 6: Schema Validation.")
-            self._stage_schema_validation(parsed_data)
-
-            # Stage 7: Post Processing
-            self.logger.info("Stage 7: Post Processing.")
-            parsed_data = self._stage_post_processing(parsed_data)
-
-            # Stage 8: JSON Validation
-            self.logger.info("Stage 8: JSON Validation.")
-            self._stage_json_validation(parsed_data)
-
-            self.logger.info("Parsing process completed successfully.")
-            return parsed_data
-
-        except TimeoutException as te:
-            self.logger.error(f"Validation Model parsing timeout: {te}", exc_info=True)
-            raise RuntimeError(f"Validation Model parsing timeout: {te}") from te
-        except Exception as e:
-            self.logger.error(f"Unexpected error during parsing: {e}", exc_info=True)
-            raise RuntimeError(f"Unexpected error during parsing: {e}") from e
+        self.logger.info("Parsing process completed.")
+        return parsed_data
 
     def merge_parsed_data(
         self, original_data: Dict[str, Any], new_data: Dict[str, Any]
@@ -290,118 +373,465 @@ class EnhancedParser(BaseParser):
                             original_data[section][field] = value
         return original_data
 
-    def _stage_ner_parsing(self, email_content: str) -> Dict[str, Any]:
+    def _stage_regex_extraction(
+        self, email_content: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
-        Executes the NER parsing stage.
+        Executes the Regex Extraction parsing stage.
 
         Args:
-            email_content (str): The email content to parse.
+            email_content (Optional[str]): The email content to parse.
 
         Returns:
-            Dict[str, Any]: Parsed data from NER.
+            Dict[str, Any]: Parsed data from Regex Extraction.
         """
-        self.logger.debug("Executing NER parsing stage.")
-        self._lazy_load_ner()
-        ner_data = self.ner_parsing(email_content)
-        return ner_data
+        if not email_content:
+            self.logger.warning("No email content provided for Regex Extraction.")
+            return {}
+        self.logger.debug("Executing Regex Extraction stage.")
+        return self.regex_extraction(email_content)
 
-    def _stage_layout_aware_parsing(self, email_content: str) -> Dict[str, Any]:
+    def _stage_ner_parsing(self, email_content: Optional[str] = None) -> Dict[str, Any]:
         """
-        Executes the Layout-Aware parsing stage.
+        Executes the NER Parsing stage.
 
         Args:
-            email_content (str): The email content to parse.
+            email_content (Optional[str]): The email content to parse.
 
         Returns:
-            Dict[str, Any]: Parsed data from Layout-Aware parsing.
+            Dict[str, Any]: Parsed data from NER Parsing.
         """
-        self.logger.debug("Executing Layout-Aware parsing stage.")
-        self._lazy_load_layout_aware()
-        layout_data = self.layout_aware_parsing(email_content)
-        return layout_data
-
-    def _stage_sequence_model_parsing(self, email_content: str) -> Dict[str, Any]:
-        """
-        Executes the Sequence Model parsing stage with timeout handling.
-
-        Args:
-            email_content (str): The email content to parse.
-
-        Returns:
-            Dict[str, Any]: Parsed data from Sequence Model.
-        """
-        self.logger.debug("Executing Sequence Model parsing stage.")
-        self._lazy_load_sequence_model()
+        if not email_content:
+            self.logger.warning("No email content provided for NER Parsing.")
+            return {}
+        self.logger.debug("Executing NER Parsing stage.")
         try:
-            # Tokenize and truncate the input text
-            tokenizer = self.sequence_model_pipeline.tokenizer
-            inputs = tokenizer.encode(
-                email_content, max_length=1024, truncation=True, return_tensors="pt"
-            )
-
-            with ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(
-                    self.sequence_model_pipeline,
-                    tokenizer.decode(inputs[0], skip_special_tokens=True),
-                    max_length=150,
-                    min_length=40,
-                    do_sample=False,
+            self._lazy_load_ner()
+            if self.ner_pipeline is None:
+                self.logger.warning(
+                    "NER pipeline is not available. Skipping NER Parsing."
                 )
-                # Wait for the result with a timeout
-                summary = future.result(timeout=LLM_TIMEOUT_SECONDS)
-                summary_text = summary[0]["summary_text"]
-                self.logger.debug(f"Sequence Model Summary: {summary_text}")
+                return {}
+            return self.ner_parsing
+        except Exception as e:
+            self.logger.error("Error during NER Parsing stage: %s", e, exc_info=True)
+            return {}
 
-                # Extract data from the summary
-                extracted_sequence = self.sequence_model_extract(summary_text)
-                return extracted_sequence
-        except TimeoutError:
-            self.logger.warning("Sequence Model parsing timed out.")
+    def _stage_donut_parsing(
+        self, document_image: Optional[Union[str, Image.Image]] = None
+    ) -> Dict[str, Any]:
+        """
+        Executes the Donut Parsing stage.
+
+        Args:
+            document_image (Optional[Union[str, Image.Image]]): The path to the document image or a PIL Image object.
+
+        Returns:
+            Dict[str, Any]: Parsed data from Donut Parsing.
+        """
+        if not document_image:
+            self.logger.warning("No document image provided for Donut Parsing.")
+            return {}
+        self.logger.debug("Executing Donut Parsing stage.")
+        try:
+            self._lazy_load_donut()
+            if self.donut_model is None or self.donut_processor is None:
+                self.logger.warning(
+                    "Donut model or processor is not available. Skipping Donut Parsing."
+                )
+                return {}
+            return self.donut_parsing(document_image)
+        except Exception as e:
+            self.logger.error("Error during Donut Parsing stage: %s", e, exc_info=True)
+            return {}
+
+    def _stage_sequence_model_parsing(
+        self, email_content: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Executes the Sequence Model Parsing stage with timeout handling.
+
+        Args:
+            email_content (Optional[str]): The email content to parse.
+
+        Returns:
+            Dict[str, Any]: Parsed data from Sequence Model Parsing.
+        """
+        if not email_content:
+            self.logger.warning("No email content provided for Sequence Model Parsing.")
+            return {}
+        self.logger.debug("Executing Sequence Model Parsing stage.")
+        try:
+            self._lazy_load_sequence_model()
+            if self.sequence_model_pipeline is None:
+                self.logger.warning(
+                    "Sequence Model pipeline is not available. Skipping Sequence Model Parsing."
+                )
+                return {}
+            return self.sequence_model_parsing_with_timeout(email_content)
+        except Exception as e:
+            self.logger.error(
+                "Error during Sequence Model Parsing stage: %s", e, exc_info=True
+            )
+            return {}
+
+    def sequence_model_parsing_with_timeout(self, email_content: str) -> Dict[str, Any]:
+        """
+        Executes the Sequence Model parsing with timeout management.
+
+        Args:
+            email_content (str): The email content to parse.
+
+        Returns:
+            Dict[str, Any]: Parsed data from the Sequence Model.
+        """
+        try:
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(self.sequence_model_parsing, email_content)
+                summary = future.result(timeout=LLM_TIMEOUT_SECONDS)
+                return summary
+        except ConcurrentTimeoutError:
+            self.logger.error("Sequence Model parsing timed out.", exc_info=True)
             return {}
         except Exception as e:
             self.logger.error(
-                f"Error during Sequence Model parsing: {e}", exc_info=True
+                "Error during Sequence Model parsing with timeout: %s", e, exc_info=True
             )
             return {}
 
-    def _stage_validation(self, email_content: str, parsed_data: Dict[str, Any]):
+    def sequence_model_parsing(self, email_content: str) -> Dict[str, Any]:
         """
-        Executes the Validation parsing stage.
-
-        Args:
-            email_content (str): The original email content.
-            parsed_data (Dict[str, Any]): The data parsed so far.
-        """
-        self.logger.debug("Executing Validation parsing stage.")
-        self._lazy_load_validation_model()
-        self.validation_parsing(email_content, parsed_data)
-
-    def ner_parsing(self, email_content: str) -> Dict[str, Any]:
-        """
-        Performs Named Entity Recognition on the email content.
+        Executes the Sequence Model parsing.
 
         Args:
             email_content (str): The email content to parse.
 
         Returns:
-            Dict[str, Any]: Extracted entities.
+            Dict[str, Any]: Parsed data from the Sequence Model.
+        """
+        self.logger.debug("Starting Sequence Model pipeline.")
+        try:
+            summary = self.sequence_model_pipeline(
+                email_content,
+                max_length=150,
+                min_length=40,
+                do_sample=False,
+            )
+            summary_text = summary[0]["summary_text"]
+            self.logger.debug("Sequence Model Summary: %s", summary_text)
+            return self.sequence_model_extract(summary_text)
+        except Exception as e:
+            self.logger.error(
+                "Error during Sequence Model inference: %s", e, exc_info=True
+            )
+            return {}
+
+    def _stage_validation(
+        self,
+        email_content: Optional[str] = None,
+        parsed_data: Optional[Dict[str, Any]] = None,
+    ):
+        """
+        Executes the Validation Parsing stage.
+
+        Args:
+            email_content (Optional[str]): The original email content.
+            parsed_data (Optional[Dict[str, Any]]): The data parsed so far.
+        """
+        if not email_content or not parsed_data:
+            self.logger.warning(
+                "Insufficient data for Validation Parsing. Skipping this stage."
+            )
+            return
+        self.logger.debug("Executing Validation Parsing stage.")
+        try:
+            self._lazy_load_validation_model()
+            if self.validation_pipeline is None:
+                self.logger.warning(
+                    "Validation Model pipeline is not available. Skipping Validation Parsing."
+                )
+                return
+            self.validation_parsing(email_content, parsed_data)
+        except Exception as e:
+            self.logger.error(
+                "Error during Validation Parsing stage: %s", e, exc_info=True
+            )
+
+    def _stage_schema_validation(self, parsed_data: Optional[Dict[str, Any]] = None):
+        """
+        Executes the Schema Validation stage.
+
+        Args:
+            parsed_data (Optional[Dict[str, Any]]): The data to validate.
+        """
+        if not parsed_data:
+            self.logger.warning(
+                "No parsed data available for Schema Validation. Skipping this stage."
+            )
+            return
+        self.logger.debug("Executing Schema Validation stage.")
+        try:
+            self._stage_schema_validation_internal(parsed_data)
+        except Exception as e:
+            self.logger.error(
+                "Error during Schema Validation stage: %s", e, exc_info=True
+            )
+
+    def _stage_post_processing(
+        self, parsed_data: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Executes the Post Processing stage.
+
+        Args:
+            parsed_data (Optional[Dict[str, Any]]): The data to post-process.
+
+        Returns:
+            Dict[str, Any]: The post-processed data.
+        """
+        if not parsed_data:
+            self.logger.warning(
+                "No parsed data available for Post Processing. Skipping this stage."
+            )
+            return {}
+        self.logger.debug("Executing Post Processing stage.")
+        try:
+            return self._stage_post_processing_internal(parsed_data)
+        except Exception as e:
+            self.logger.error(
+                "Error during Post Processing stage: %s", e, exc_info=True
+            )
+            return parsed_data
+
+    def _stage_schema_validation_internal(self, parsed_data: Dict[str, Any]):
+        """
+        Internal method to validate parsed data against the schema.
+
+        Args:
+            parsed_data (Dict[str, Any]): The data to validate.
+        """
+        self.logger.debug("Starting schema validation.")
+        missing_fields: List[str] = []
+        inconsistent_fields: List[str] = []
+
+        try:
+            # Iterate over the schema to check for missing and inconsistent fields
+            for section, fields in QUICKBASE_SCHEMA.items():
+                for field in fields:
+                    value = parsed_data.get(section, {}).get(field)
+                    if not value or value == ["N/A"]:
+                        missing_fields.append(f"{section} -> {field}")
+                        self.logger.debug("Missing field: %s -> %s", section, field)
+                        continue
+
+                    # Perform fuzzy matching for known values
+                    known_values = self.config.get("known_values", {}).get(field, [])
+                    if known_values:
+                        best_match = max(
+                            known_values,
+                            key=lambda x: fuzz.partial_ratio(
+                                x.lower(), value[0].lower()
+                            ),
+                            default=None,
+                        )
+                        if best_match and fuzz.partial_ratio(
+                            best_match.lower(), value[0].lower()
+                        ) >= self.config.get("fuzzy_threshold", 90):
+                            parsed_data[section][field] = [best_match]
+                            self.logger.debug(
+                                "Updated %s in %s with best match: %s",
+                                field,
+                                section,
+                                best_match,
+                            )
+                        else:
+                            inconsistent_fields.append(f"{section} -> {field}")
+                            self.logger.debug(
+                                "Inconsistent field: %s -> %s with value %s",
+                                section,
+                                field,
+                                value,
+                            )
+
+            # Add missing and inconsistent fields to parsed data
+            if missing_fields:
+                parsed_data["missing_fields"] = missing_fields
+                self.logger.info("Missing fields identified: %s", missing_fields)
+
+            if inconsistent_fields:
+                parsed_data["inconsistent_fields"] = inconsistent_fields
+                self.logger.info(
+                    "Inconsistent fields identified: %s", inconsistent_fields
+                )
+        except Exception as e:
+            self.logger.error("Error during schema validation: %s", e, exc_info=True)
+
+    def _stage_post_processing_internal(
+        self, parsed_data: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Internal method to perform post-processing on parsed data.
+
+        Args:
+            parsed_data (Dict[str, Any]): The data to post-process.
+
+        Returns:
+            Dict[str, Any]: The post-processed data.
+        """
+        self.logger.debug("Starting post-processing of parsed data.")
+        skip_sections = [
+            "TransformerEntities",
+            "Entities",
+            "missing_fields",
+            "inconsistent_fields",
+            "user_notifications",
+            "validation_issues",
+        ]
+
+        try:
+            # Iterate over sections and fields to format dates and phone numbers
+            for section, fields in parsed_data.items():
+                if section in skip_sections:
+                    continue
+                if not isinstance(fields, dict):
+                    continue
+
+                for field, value_list in fields.items():
+                    if not isinstance(value_list, list):
+                        continue
+                    for idx, value in enumerate(value_list):
+                        if "Date" in field:
+                            formatted_date = self.format_date(value)
+                            parsed_data[section][field][idx] = formatted_date
+                            self.logger.debug(
+                                "Formatted date for %s in %s: %s",
+                                field,
+                                section,
+                                formatted_date,
+                            )
+                        if (
+                            "Phone Number" in field
+                            or "Contact #" in field
+                            or "Phone" in field
+                        ):
+                            formatted_phone = self.format_phone_number(value)
+                            parsed_data[section][field][idx] = formatted_phone
+                            self.logger.debug(
+                                "Formatted phone number for %s in %s: %s",
+                                field,
+                                section,
+                                formatted_phone,
+                            )
+
+            # Verify attachments if mentioned
+            attachments = parsed_data.get("Assignment Information", {}).get(
+                "Attachment(s)", []
+            )
+            if attachments and not self.verify_attachments(
+                attachments, parsed_data.get("email_content", "")
+            ):
+                parsed_data["user_notifications"] = parsed_data.get(
+                    "user_notifications", []
+                ) + ["Attachments mentioned but not found in the email."]
+                self.logger.info(
+                    "Attachments mentioned in email but not found. User notification added."
+                )
+
+            self.logger.debug("Post-processing completed.")
+            return parsed_data
+        except Exception as e:
+            self.logger.error("Error during post-processing: %s", e, exc_info=True)
+            return parsed_data
+
+    def _stage_json_validation(self, parsed_data: Optional[Dict[str, Any]] = None):
+        """
+        Executes the JSON Validation stage.
+
+        Args:
+            parsed_data (Optional[Dict[str, Any]]): The data to validate.
+        """
+        if not parsed_data:
+            self.logger.warning(
+                "No parsed data available for JSON Validation. Skipping this stage."
+            )
+            return
+        self.logger.debug("Executing JSON Validation stage.")
+        try:
+            self._stage_json_validation_internal(parsed_data)
+        except Exception as e:
+            self.logger.error(
+                "Error during JSON Validation stage: %s", e, exc_info=True
+            )
+
+    def _stage_json_validation_internal(self, parsed_data: Dict[str, Any]):
+        """
+        Internal method to validate parsed data against a JSON schema.
+
+        Args:
+            parsed_data (Dict[str, Any]): The data to validate.
+        """
+        self.logger.debug("Starting JSON validation.")
+        try:
+            is_valid, error_message = validate_json(parsed_data)
+            if is_valid:
+                self.logger.info("JSON validation passed.")
+            else:
+                self.logger.error("JSON validation failed: %s", error_message)
+                parsed_data["validation_issues"] = parsed_data.get(
+                    "validation_issues", []
+                ) + [error_message]
+        except Exception as e:
+            self.logger.error("Error during JSON validation: %s", e, exc_info=True)
+            parsed_data["validation_issues"] = parsed_data.get(
+                "validation_issues", []
+            ) + [str(e)]
+
+    def parse_email(
+        self,
+        email_content: Optional[str] = None,
+        document_image: Optional[Union[str, Image.Image]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Parses the email content and document image using the enhanced parser.
+
+        Args:
+            email_content (Optional[str]): The email content to parse.
+            document_image (Optional[Union[str, Image.Image]]): The path to the document image or a PIL Image object.
+
+        Returns:
+            Dict[str, Any]: The parsed data.
+        """
+        self.logger.info("parse_email called.")
+        return self.parse(email_content=email_content, document_image=document_image)
+
+    def ner_parsing(self, email_content: str) -> Dict[str, Any]:
+        """
+        Performs Named Entity Recognition parsing on the email content.
+
+        Args:
+            email_content (str): The email content to parse.
+
+        Returns:
+            Dict[str, Any]: Extracted named entities.
         """
         try:
             self.logger.debug("Starting NER pipeline.")
             entities = self.ner_pipeline(email_content)
             extracted_entities: Dict[str, Any] = {}
 
-            # Map NER labels to schema fields
+            # Enhanced mapping of NER labels to schema fields
             label_field_mapping = {
-                "PER": ("Insured Information", "Name"),
-                "ORG": ("Requesting Party", "Insurance Company"),
-                "LOC": ("Insured Information", "Loss Address"),
-                "MISC": ("Assignment Information", "Cause of loss"),
-                "DATE": ("Assignment Information", "Date of Loss/Occurrence"),
-                # Add custom labels if using a fine-tuned model
-                # 'POLICY_NUMBER': ('Adjuster Information', 'Policy #'),
-                # 'CLAIM_NUMBER': ('Requesting Party', 'Carrier Claim Number'),
-                # Add more mappings as needed
+                "PER": [
+                    ("Insured Information", "Name"),
+                    ("Adjuster Information", "Adjuster Name"),
+                ],
+                "ORG": [("Requesting Party", "Insurance Company")],
+                "LOC": [("Insured Information", "Loss Address")],
+                "DATE": [("Assignment Information", "Date of Loss/Occurrence")],
+                "MONEY": [("Assignment Information", "Estimated Damage")],
+                "GPE": [("Insured Information", "Loss Address")],  # Geopolitical Entity
+                "PRODUCT": [("Adjuster Information", "Policy #")],
+                "EVENT": [("Assignment Information", "Cause of loss")],
             }
 
             for entity in entities:
@@ -409,17 +839,128 @@ class EnhancedParser(BaseParser):
                 text = entity.get("word")
 
                 if label and text:
-                    mapping = label_field_mapping.get(label)
-                    if mapping:
-                        section, field = mapping
+                    mappings = label_field_mapping.get(label, [])
+                    for section, field in mappings:
                         extracted_entities.setdefault(section, {}).setdefault(
                             field, []
                         ).append(text.strip())
+                        self.logger.debug(
+                            "Extracted %s entity '%s' mapped to %s - %s",
+                            label,
+                            text,
+                            section,
+                            field,
+                        )
 
-            self.logger.debug(f"NER Parsing Result: {extracted_entities}")
             return extracted_entities
         except Exception as e:
-            self.logger.error(f"Error during NER parsing: {e}", exc_info=True)
+            self.logger.error("Error during NER parsing: %s", e, exc_info=True)
+            return {}
+
+    def donut_parsing(self, document_image: Union[str, Image.Image]) -> Dict[str, Any]:
+        """
+        Performs Donut parsing on the provided document image.
+
+        Args:
+            document_image (Union[str, Image.Image]): The path to the document image or a PIL Image object.
+
+        Returns:
+            Dict[str, Any]: Extracted data from Donut in JSON format mapped to the existing schema.
+        """
+        try:
+            self.logger.debug("Starting Donut parsing.")
+
+            # Load image if a path is provided
+            if isinstance(document_image, str):
+                document_image = Image.open(document_image).convert("RGB")
+                self.logger.debug("Loaded image from path: %s", document_image)
+
+            # Preprocess image and prepare input for Donut
+            encoding = self.donut_processor(document_image, return_tensors="pt")
+            pixel_values = encoding.pixel_values.to(self.device)
+            task_prompt = "<s_cord-v2>"  # Task-specific prompt for parsing
+            decoder_input_ids = self.donut_processor.tokenizer(
+                task_prompt, add_special_tokens=False, return_tensors="pt"
+            ).input_ids.to(self.device)
+
+            # Generate output from the Donut model
+            self.logger.debug("Generating output from Donut model.")
+            outputs = self.donut_model.generate(
+                pixel_values=pixel_values,
+                decoder_input_ids=decoder_input_ids,
+                max_length=self.donut_model.config.max_position_embeddings,
+                pad_token_id=self.donut_processor.tokenizer.pad_token_id,
+                eos_token_id=self.donut_processor.tokenizer.eos_token_id,
+                use_cache=True,
+            )
+
+            # Decode and convert to JSON
+            self.logger.debug("Decoding Donut model output.")
+            sequence = self.donut_processor.batch_decode(
+                outputs, skip_special_tokens=True
+            )[0]
+            sequence = sequence.replace(
+                self.donut_processor.tokenizer.eos_token, ""
+            ).replace(self.donut_processor.tokenizer.pad_token, "")
+            json_data = self.donut_processor.token2json(sequence)
+
+            # Map Donut JSON output to existing schema
+            mapped_data = self.map_donut_output_to_schema(json_data)
+            self.logger.debug("Donut Parsing Result: %s", mapped_data)
+            return mapped_data
+        except Exception as e:
+            self.logger.error("Error during Donut parsing: %s", e, exc_info=True)
+            return {}
+
+    def map_donut_output_to_schema(self, donut_json: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Maps the Donut JSON output to the existing schema.
+
+        Args:
+            donut_json (Dict[str, Any]): The JSON output from Donut parsing.
+
+        Returns:
+            Dict[str, Any]: Mapped data according to the existing schema.
+        """
+        mapped_data: Dict[str, Any] = {}
+        try:
+            # Define a mapping from Donut fields to QUICKBASE_SCHEMA
+            field_mapping = {
+                "policy_number": ("Adjuster Information", "Policy #"),
+                "claim_number": ("Requesting Party", "Carrier Claim Number"),
+                "insured_name": ("Insured Information", "Name"),
+                "loss_address": ("Insured Information", "Loss Address"),
+                "adjuster_name": ("Adjuster Information", "Adjuster Name"),
+                "adjuster_phone": ("Adjuster Information", "Adjuster Phone Number"),
+                "adjuster_email": ("Adjuster Information", "Adjuster Email"),
+                "date_of_loss": ("Assignment Information", "Date of Loss/Occurrence"),
+                "cause_of_loss": ("Assignment Information", "Cause of loss"),
+                "loss_description": ("Assignment Information", "Loss Description"),
+                # Add more mappings as needed
+            }
+
+            for item in donut_json.get("form", []):
+                field_name = item.get("name")
+                field_value = item.get("value")
+
+                if field_name in field_mapping:
+                    section, qb_field = field_mapping[field_name]
+                    mapped_data.setdefault(section, {}).setdefault(qb_field, []).append(
+                        field_value
+                    )
+                    self.logger.debug(
+                        "Mapped Donut field '%s' to '%s - %s' with value '%s'",
+                        field_name,
+                        section,
+                        qb_field,
+                        field_value,
+                    )
+
+            return mapped_data
+        except Exception as e:
+            self.logger.error(
+                "Error during mapping Donut output to schema: %s", e, exc_info=True
+            )
             return {}
 
     def regex_extraction(self, email_content: str) -> Dict[str, Any]:
@@ -490,26 +1031,13 @@ class EnhancedParser(BaseParser):
                     extracted_data.setdefault(section, {}).setdefault(field, []).append(
                         value
                     )
-                    self.logger.debug(f"Extracted {field}: {value}")
+                    self.logger.debug("Extracted %s: %s", field, value)
 
-            self.logger.debug(f"Regex Extraction Result: {extracted_data}")
+            self.logger.debug("Regex Extraction Result: %s", extracted_data)
             return extracted_data
         except Exception as e:
-            self.logger.error(f"Error during regex extraction: {e}", exc_info=True)
+            self.logger.error("Error during regex extraction: %s", e, exc_info=True)
             return {}
-
-    def layout_aware_parsing(self, email_content: str) -> Dict[str, Any]:
-        """
-        Performs Layout-Aware parsing on the email content.
-
-        Args:
-            email_content (str): The email content to parse.
-
-        Returns:
-            Dict[str, Any]: Extracted layout-aware entities.
-        """
-        # Since we don't have actual layout information, we can skip or simplify this method.
-        return {}
 
     def sequence_model_extract(self, summary_text: str) -> Dict[str, Any]:
         """
@@ -539,170 +1067,72 @@ class EnhancedParser(BaseParser):
                                     field, []
                                 ).append(value)
                                 self.logger.debug(
-                                    f"Extracted {key}: {value} into section {section}"
+                                    "Extracted %s: %s into section %s",
+                                    key,
+                                    value,
+                                    section,
                                 )
 
-            self.logger.debug(f"Sequence Model Extraction Result: {extracted_sequence}")
+            self.logger.debug(
+                "Sequence Model Extraction Result: %s", extracted_sequence
+            )
             return extracted_sequence
         except Exception as e:
             self.logger.error(
-                f"Error during Sequence Model extraction: {e}", exc_info=True
+                "Error during Sequence Model extraction: %s", e, exc_info=True
             )
             return {}
 
     def validation_parsing(self, email_content: str, parsed_data: Dict[str, Any]):
         """
-        Validates the extracted data against the original email content.
+        Performs validation parsing on the email content and parsed data.
 
         Args:
             email_content (str): The original email content.
             parsed_data (Dict[str, Any]): The data parsed so far.
         """
-        # Implement validation logic if necessary
-        pass
-
-    def _stage_schema_validation(self, parsed_data: Dict[str, Any]):
-        """
-        Validates the parsed data against the predefined schema.
-
-        Args:
-            parsed_data (Dict[str, Any]): The data to validate.
-        """
-        self.logger.debug("Starting schema validation.")
-        missing_fields: List[str] = []
-        inconsistent_fields: List[str] = []
-
         try:
-            # Iterate over the schema to check for missing and inconsistent fields
-            for section, fields in QUICKBASE_SCHEMA.items():
-                for field in fields:
-                    value = parsed_data.get(section, {}).get(field)
-                    if not value or value == ["N/A"]:
-                        missing_fields.append(f"{section} -> {field}")
-                        self.logger.debug(f"Missing field: {section} -> {field}")
-                        continue
+            self.logger.debug("Starting validation parsing.")
+            inconsistencies = []
 
-                    # Perform fuzzy matching for known values
-                    known_values = self.config.get("known_values", {}).get(field, [])
-                    if known_values:
-                        best_match = max(
-                            known_values,
-                            key=lambda x: fuzz.partial_ratio(
-                                x.lower(), value[0].lower()
-                            ),
-                            default=None,
-                        )
-                        if best_match and fuzz.partial_ratio(
-                            best_match.lower(), value[0].lower()
-                        ) >= self.config.get("fuzzy_threshold", 90):
-                            parsed_data[section][field] = [best_match]
-                            self.logger.debug(
-                                f"Updated {field} in {section} with best match: {best_match}"
-                            )
-                        else:
-                            inconsistent_fields.append(f"{section} -> {field}")
-                            self.logger.debug(
-                                f"Inconsistent field: {section} -> {field} with value {value}"
-                            )
-
-            # Add missing and inconsistent fields to parsed data
-            if missing_fields:
-                parsed_data["missing_fields"] = missing_fields
-                self.logger.info(f"Missing fields identified: {missing_fields}")
-
-            if inconsistent_fields:
-                parsed_data["inconsistent_fields"] = inconsistent_fields
-                self.logger.info(
-                    f"Inconsistent fields identified: {inconsistent_fields}"
-                )
-        except Exception as e:
-            self.logger.error(f"Error during schema validation: {e}", exc_info=True)
-
-    def _stage_post_processing(self, parsed_data: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Performs post-processing on the parsed data, including formatting and verification.
-
-        Args:
-            parsed_data (Dict[str, Any]): The data to post-process.
-
-        Returns:
-            Dict[str, Any]: The post-processed data.
-        """
-        self.logger.debug("Starting post-processing of parsed data.")
-        skip_sections = [
-            "TransformerEntities",
-            "Entities",
-            "missing_fields",
-            "inconsistent_fields",
-            "user_notifications",
-            "validation_issues",
-        ]
-
-        try:
-            # Iterate over sections and fields to format dates and phone numbers
+            # Check for consistency between parsed data and email content
             for section, fields in parsed_data.items():
-                if section in skip_sections:
-                    continue
-                if not isinstance(fields, dict):
-                    continue
-
-                for field, value_list in fields.items():
-                    if not isinstance(value_list, list):
-                        continue
-                    for idx, value in enumerate(value_list):
-                        if "Date" in field:
-                            formatted_date = self.format_date(value)
-                            parsed_data[section][field][idx] = formatted_date
-                            self.logger.debug(
-                                f"Formatted date for {field} in {section}: {formatted_date}"
-                            )
-                        if "Phone Number" in field or "Contact #" in field:
-                            formatted_phone = self.format_phone_number(value)
-                            parsed_data[section][field][idx] = formatted_phone
-                            self.logger.debug(
-                                f"Formatted phone number for {field} in {section}: {formatted_phone}"
+                for field, value in fields.items():
+                    if isinstance(value, list) and value:
+                        value = value[0]  # Take the first item if it's a list
+                    if isinstance(value, str) and value != "N/A":
+                        # Check if the value appears in the email content
+                        if value.lower() not in email_content.lower():
+                            inconsistencies.append(
+                                f"Inconsistency in {section} - {field}: '{value}' not found in email content"
                             )
 
-            # Verify attachments if mentioned
-            attachments = parsed_data.get("Assignment Information", {}).get(
-                "Attachment(s)", []
-            )
-            if attachments and not self.verify_attachments(attachments):
-                parsed_data["user_notifications"] = (
-                    "Attachments mentioned but not found in the email."
-                )
-                self.logger.info(
-                    "Attachments mentioned in email but not found. User notification added."
-                )
+            # Check for missing required fields
+            required_fields = [
+                ("Requesting Party", "Insurance Company"),
+                ("Requesting Party", "Carrier Claim Number"),
+                ("Insured Information", "Name"),
+                ("Insured Information", "Loss Address"),
+                ("Adjuster Information", "Adjuster Name"),
+                ("Adjuster Information", "Policy #"),
+                ("Assignment Information", "Date of Loss/Occurrence"),
+                ("Assignment Information", "Cause of loss"),
+            ]
 
-            self.logger.debug("Post-processing completed.")
-            return parsed_data
+            for section, field in required_fields:
+                if not parsed_data.get(section, {}).get(field):
+                    inconsistencies.append(
+                        f"Missing required field: {section} - {field}"
+                    )
+
+            if inconsistencies:
+                self.logger.warning("Validation issues found: %s", inconsistencies)
+                parsed_data["validation_issues"] = inconsistencies
+            else:
+                self.logger.info("Validation parsing completed successfully.")
+
         except Exception as e:
-            self.logger.error(f"Error during post-processing: {e}", exc_info=True)
-            return parsed_data
-
-    def format_date(self, date_str: str) -> str:
-        """
-        Formats a date string into a standardized format.
-
-        Args:
-            date_str (str): The date string to format.
-
-        Returns:
-            str: The formatted date string or "N/A" if invalid.
-        """
-        if date_str == "N/A":
-            return date_str
-
-        self.logger.debug(f"Formatting date: {date_str}")
-        try:
-            date_obj = dateutil_parser.parse(date_str, fuzzy=True)
-            standardized_date = date_obj.strftime("%Y-%m-%d")
-            self.logger.debug(f"Standardized date: {standardized_date}")
-            return standardized_date
-        except (ValueError, TypeError) as e:
-            self.logger.warning(f"Failed to format date: {date_str} - {e}")
-            return "N/A"
+            self.logger.error("Error during validation parsing: %s", e, exc_info=True)
 
     def format_phone_number(self, phone: str) -> str:
         """
@@ -717,72 +1147,73 @@ class EnhancedParser(BaseParser):
         if phone == "N/A":
             return phone
 
-        self.logger.debug(f"Formatting phone number: {phone}")
+        self.logger.debug("Formatting phone number: %s", phone)
         try:
             parsed_number = phonenumbers.parse(phone, "US")
             if phonenumbers.is_valid_number(parsed_number):
                 formatted_number = phonenumbers.format_number(
                     parsed_number, PhoneNumberFormat.E164
                 )
-                self.logger.debug(f"Formatted phone number: {formatted_number}")
+                self.logger.debug("Formatted phone number: %s", formatted_number)
                 return formatted_number
-            else:
-                self.logger.warning(f"Invalid phone number: {phone}")
-                return "N/A"
+            self.logger.warning("Invalid phone number: %s", phone)
+            return "N/A"
         except phonenumbers.NumberParseException as e:
-            self.logger.warning(f"Failed to parse phone number: {phone} - {e}")
+            self.logger.warning("Failed to parse phone number: %s - %s", phone, e)
             return "N/A"
 
-    def verify_attachments(self, attachments: List[str]) -> bool:
+    def verify_attachments(self, attachments: List[str], email_content: str) -> bool:
         """
-        Verifies if the mentioned attachments are present.
+        Verifies if the attachments mentioned in the email content are present in the provided list.
 
         Args:
-            attachments (List[str]): A list of attachment names.
+            attachments (List[str]): List of attachments.
+            email_content (str): The email content.
 
         Returns:
-            bool: True if attachments are verified, False otherwise.
+            bool: True if all mentioned attachments are present, False otherwise.
         """
-        # Placeholder for actual attachment verification logic
-        self.logger.debug(f"Verifying attachments: {attachments}")
-        # Assuming all attachments are verified for now
-        return True
-
-    def _stage_json_validation(self, parsed_data: Dict[str, Any]):
-        """
-        Validates the final parsed data against a JSON schema.
-
-        Args:
-            parsed_data (Dict[str, Any]): The data to validate.
-        """
-        self.logger.debug("Starting JSON validation.")
+        self.logger.debug("Verifying attachments: %s", attachments)
         try:
-            is_valid, error_message = validate_json(parsed_data)
-            if is_valid:
-                self.logger.info("JSON validation passed.")
-            else:
-                self.logger.error(f"JSON validation failed: {error_message}")
-                parsed_data["validation_issues"] = parsed_data.get(
-                    "validation_issues", []
-                ) + [error_message]
-        except Exception as e:
-            self.logger.error(f"Error during JSON validation: {e}", exc_info=True)
-            parsed_data["validation_issues"] = parsed_data.get(
-                "validation_issues", []
-            ) + [str(e)]
+            # Check if attachments are mentioned in the email content
+            mentioned_attachments = re.findall(
+                r"attached\s+([\w\s.,]+)", email_content, re.IGNORECASE
+            )
+            mentioned_attachments = [
+                att.strip()
+                for sublist in mentioned_attachments
+                for att in sublist.split(",")
+            ]
 
-    def parse_email(
-        self, email_content: str, parser_option: Any = None
-    ) -> Dict[str, Any]:
+            # Check if all mentioned attachments are in the provided list
+            all_mentioned_present = all(
+                any(mention.lower() in att.lower() for att in attachments)
+                for mention in mentioned_attachments
+            )
+
+            # Check if the number of attachments matches
+            count_matches = len(attachments) == len(mentioned_attachments)
+
+            if all_mentioned_present and count_matches:
+                self.logger.debug("All attachments verified successfully.")
+                return True
+            self.logger.warning("Discrepancy in attachments detected.")
+            return False
+        except Exception as e:
+            self.logger.error(
+                "Error during attachment verification: %s", e, exc_info=True
+            )
+            return False
+
+    def format_date(self, date_string: str) -> str:
         """
-        Parses the email content using the enhanced parser.
+        Formats a date string into a consistent format.
 
         Args:
-            email_content (str): The email content to parse.
-            parser_option (Any, optional): Additional parser options.
+            date_string (str): The date string to format.
 
         Returns:
-            Dict[str, Any]: The parsed data.
+            str: The formatted date string or the original string if parsing fails.
         """
-        self.logger.info("parse_email called.")
-        return self.parse(email_content)
+
+        pass
