@@ -354,9 +354,7 @@ class EnhancedParser(BaseParser):
 
         return parsed_data
 
-    def merge_parsed_data(
-        self, original_data: Dict[str, Any], new_data: Dict[str, Any]
-    ) -> Dict[str, Any]:
+    def merge_parsed_data(self, original_data: Dict[str, Any], new_data: Dict[str, Any]) -> Dict[str, Any]:
         for section, fields in new_data.items():
             if section not in original_data:
                 original_data[section] = fields
@@ -365,19 +363,16 @@ class EnhancedParser(BaseParser):
                     if field not in original_data[section]:
                         original_data[section][field] = value
                     else:
-                        if isinstance(
-                            original_data[section][field], list
-                        ) and isinstance(value, list):
-                            combined_list = original_data[section][field] + value
-                            seen = set()
-                            original_data[section][field] = [
-                                x
-                                for x in combined_list
-                                if not (x in seen or seen.add(x))
-                            ]
+                        if isinstance(original_data[section][field], list) and isinstance(value, list):
+                            combined_list = original_data[section][field]
+                            for item in value:
+                                if item not in combined_list:
+                                    combined_list.append(item)
+                            original_data[section][field] = combined_list
                         else:
                             original_data[section][field] = value
         return original_data
+
 
     def validate_input(
         self,
