@@ -1,5 +1,4 @@
 <!-- templates/index.html -->
-
 <!doctype html>
 <html lang="en" data-theme="light">
   <head>
@@ -117,6 +116,7 @@
                 id="parserForm"
                 method="POST"
                 action="/parse_email"
+                enctype="multipart/form-data"
                 novalidate
               >
                 <!-- Sample Inputs Buttons -->
@@ -125,7 +125,7 @@
                   <div>
                     <button
                       type="button"
-                      class="btn btn-sm btn-outline-primary me-2"
+                      class="btn btn-sm btn-outline-primary me-2 sample-btn"
                       data-template="claim"
                       aria-label="Load Formal Claim Email"
                     >
@@ -133,7 +133,7 @@
                     </button>
                     <button
                       type="button"
-                      class="btn btn-sm btn-outline-primary me-2"
+                      class="btn btn-sm btn-outline-primary me-2 sample-btn"
                       data-template="informal_claim"
                       aria-label="Load Informal Claim Email"
                     >
@@ -141,7 +141,7 @@
                     </button>
                     <button
                       type="button"
-                      class="btn btn-sm btn-outline-primary me-2"
+                      class="btn btn-sm btn-outline-primary me-2 sample-btn"
                       data-template="formal_fire_claim"
                       aria-label="Load Formal Fire Claim Email"
                     >
@@ -169,6 +169,24 @@
                   ></textarea>
                   <div class="invalid-feedback">
                     Please enter the email content to parse.
+                  </div>
+                </div>
+
+                <!-- Document Image -->
+                <div class="mb-3">
+                  <label for="document_image" class="form-label"
+                    >Document Image (Optional)</label
+                  >
+                  <input
+                    type="file"
+                    class="form__control form-control"
+                    id="document_image"
+                    name="document_image"
+                    accept="image/*"
+                    aria-describedby="documentHelp"
+                  />
+                  <div id="documentHelp" class="form-text">
+                    Upload an image of a document to include in the parsing.
                   </div>
                 </div>
 
@@ -203,6 +221,7 @@
                   type="submit"
                   class="btn--primary w-100"
                   aria-label="Parse Email"
+                  id="submitButton" <!-- Added ID for JavaScript -->
                 >
                   Parse Email
                 </button>
@@ -248,6 +267,20 @@
                     Human-Readable
                   </button>
                 </li>
+                <li class="nav-item" role="presentation">
+                  <button
+                    class="nav-link"
+                    id="original-tab"
+                    data-bs-toggle="tab"
+                    data-bs-target="#originalEmailTab"
+                    type="button"
+                    role="tab"
+                    aria-controls="originalEmailTab"
+                    aria-selected="false"
+                  >
+                    Original Email
+                  </button>
+                </li>
               </ul>
 
               <div class="tab-content mt-3" id="parsedDataTabsContent">
@@ -283,6 +316,16 @@
                   aria-labelledby="human-tab"
                 >
                   <div id="humanOutput" class="parsed-human-readable"></div>
+                </div>
+
+                <!-- Original Email Tab -->
+                <div
+                  class="tab-pane fade"
+                  id="originalEmailTab"
+                  role="tabpanel"
+                  aria-labelledby="original-tab"
+                >
+                  <div id="originalEmail" class="original-email-content"></div>
                 </div>
               </div>
 
@@ -320,6 +363,22 @@
                 >
                   Download PDF
                 </button>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <!-- Highlighted Email Section -->
+      <div class="row">
+        <section class="col-12">
+          <div class="card">
+            <header class="card__header">
+              <h5 class="card__title mb-0">Highlighted Email</h5>
+            </header>
+            <div class="card__body">
+              <div id="highlightedEmail" class="highlighted-email-content">
+                <!-- Original email content with highlighted parsed entities will appear here -->
               </div>
             </div>
           </div>
@@ -438,6 +497,13 @@
     <script
       src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/prism.min.js"
       defer
+      crossorigin="anonymous"
+    ></script>
+
+    <!-- Web socket live parsing -->
+    <script
+      src="https://cdn.socket.io/4.5.4/socket.io.min.js"
+      integrity="sha384-XgLQax4uUXAF/vKMSwPhK/rc5J6cJ89kZx65dPFdTjCcHt+XKdOTTAd9C1cZbdvI"
       crossorigin="anonymous"
     ></script>
 

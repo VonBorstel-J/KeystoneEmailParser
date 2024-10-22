@@ -85,6 +85,38 @@ class Config:
             'no', 'n', 'false', 'f', '0', '[ ]', '()', '[N/A]', '(N/A)',
         ],
     }
+    
+    # Model Timeouts
+    MODEL_TIMEOUTS = {
+        'ner': int(os.getenv('NER_TIMEOUT', '30')),
+        'donut': int(os.getenv('DONUT_TIMEOUT', '60')),
+        'sequence': int(os.getenv('SEQUENCE_TIMEOUT', '45')),
+        'validation': int(os.getenv('VALIDATION_TIMEOUT', '30'))
+    }
+    
+    # Model Configurations
+    MODEL_CONFIG = {
+        'ner': {
+            'name': "dslim/bert-base-NER",
+            'type': "ner",
+            'batch_size': 32
+        },
+        'donut': {
+            'name': "naver-clova-ix/donut-base-finetuned-cord-v2",
+            'type': "document",
+            'batch_size': 1
+        },
+        'sequence': {
+            'name': "facebook/bart-large-cnn",
+            'type': "summarization",
+            'batch_size': 8
+        },
+        'validation': {
+            'name': "gpt2",
+            'type': "text-generation",
+            'batch_size': 4
+        }
+    }
 
     # Valid File Extensions for Attachments
     VALID_EXTENSIONS = [

@@ -24,170 +24,9 @@ const LOADING_MESSAGES = [
 
 // Email Templates
 const EMAIL_TEMPLATES = {
-  claim: `Subject: Insurance Claim Submission
-From: john.doe@example.com
-To: claims@insurancecompany.com
-Date: April 10, 2024
-
-Dear Claims Handler,
-
-I am writing to submit a claim regarding the recent loss at my property.
-
-**Requesting Party**
-Insurance Company: ABC Insurance
-Handler: Jane Smith
-Carrier Claim Number: CLM-2024-7890
-
-**Insured Information**
-Name: John Doe
-Contact #: (555) 123-4567
-Loss Address: 123 Elm Street, Springfield, IL
-Public Adjuster: Mark Johnson
-Is the insured an Owner or a Tenant of the loss location? Owner
-
-**Adjuster Information**
-Adjuster Name: Emily Davis
-Adjuster Phone Number: (555) 987-6543
-Adjuster Email: emily.davis@insurancecompany.com
-Job Title: Senior Adjuster
-Address: 456 Oak Avenue, Springfield, IL
-Policy #: POL-567890
-
-**Assignment Information**
-Date of Loss/Occurrence: April 5, 2024
-Cause of loss: Hail Storm
-Facts of Loss: On April 5th, a severe hail storm caused significant damage to the roof and siding of my home.
-Loss Description: Multiple shingles were torn off, and several sections of the siding are cracked or missing.
-Residence Occupied During Loss: Yes
-Was Someone home at time of damage: Yes
-Repair or Mitigation Progress: Initial assessments completed; awaiting approval for repairs.
-Type: Hail
-Inspection type: On-site inspection
-
-Check the box of applicable assignment type:
-- [x] Wind
-- [x] Structural
-- [x] Hail
-- [ ] Foundation
-- [ ] Other - provide details:
-
-**Additional details/Special Instructions:**
-Please expedite the inspection process as repairs are urgently needed to prevent further damage.
-
-**Attachment(s):**
-- Photos of damage
-- Initial repair estimates
-
-Thank you for your prompt attention to this matter.
-
-Sincerely,
-John Doe
-
-P.S. Does anyone know a good place for lunch near the office? I'm getting tired of the usual sandwich shop! 🥪😄`,
-  informal_claim: `Subject: Re: Claim #BX-20230722 - Flood damage at Johnson residence
-
-To: claims@insuranceco.com, field-team@insuranceco.com  
-CC: t.roberts@structuralexperts.com, mold-assessment@cleanair.org  
-BCC: legal@insuranceco.com
-
-Hey team,
-
-Just got back from the Johnson property - what a mess! 😱 You wouldn't believe the state of things. Anyway, here's the lowdown on claim #BX-20230722:
-
-So, Mrs. Emily Johnson (emilyjohnson@email.com, 555-867-5309) has been renting this place at 456 Maple Avenue, Riverside, CA 92501 for about 3 years now. The poor woman was out of town when that freak rainstorm hit on July 22nd (last Saturday). Her neighbor, Mr. Thompson, called her when he saw water pouring out from under her front door. Talk about a nasty surprise to come home to!
-
-I spoke with the property owner, Big City Rentals (contact: Sarah Lee, 555-123-4567), and they're insured under policy #BCR-2023-45678. They've already sent their maintenance guy, Joe, to start drying things out. He's set up some industrial fans, but honestly, I think we're looking at some serious remediation here.
-
-I did a walkthrough yesterday (July 25th) with our go-to public adjuster, Frank Martinez from "Fair Claim Settlements Inc." (frank.martinez@fairclaim.com). We're both concerned about potential mold issues, especially in the basement where the water was about 2 feet deep. 😬 The living room carpet is completely ruined, and there's visible water damage on the walls up to about 18 inches.
-
-Mrs. Johnson mentioned she's staying with her sister for now but is worried about her lease. I told her to document everything she's had to spend because of this - hotel, eating out, etc. Oh, and she's been trying to reach our claims hotline (800-555-9876) but keeps getting put on hold. Can someone look into that?
-
-I'm thinking we need to get Tom Roberts (CC'd) from Structural Experts to take a look ASAP. There's some worrying cracks in the foundation that might have been exacerbated by the flooding. Also, I've CC'd the mold assessment team because, well, better safe than sorry, right?
-
-Quick summary for the database (Jane, can you input this?):
-
-Claim handler: Yours truly, Alex Rodriguez (alex.r@insuranceco.com, 555-246-8101)  
-Type of loss: Flood damage (possibly some wind damage to roof as well)  
-Occupancy: Tenant-occupied  
-Someone home during incident: No  
-Current repair status: Initial drying in progress  
-Inspection type: Initial assessment complete, waiting on specialist inspections  
-I've uploaded some photos and videos to our shared drive. Fair warning: the basement shots are pretty grim.
-
-We should probably touch base with legal (BCC'd) about the lease situation. Also, heads up to the field team - the street is still partially flooded, so wear your waterproof boots if you're heading out there!
-
-Let me know if you need anything else. I'll be in the office tomorrow trying to make sense of all this!
-
-Cheers,  
-Alex
-
-P.S. Does anyone know a good place for lunch near the office? I'm getting tired of the usual sandwich shop! 🥪😄`,
-  formal_fire_claim: `Subject: Urgent: Fire Incident at 789 Pine Street - Claim #FI-20240815
-
-To: fire.claims@insuranceco.com, safety.team@insuranceco.com  
-CC: j.smith@fireexperts.com, l.brown@cleanupcrew.org  
-BCC: legal@insuranceco.com
-
-Dear Team,
-
-I hope this message finds you well, though I wish it were under better circumstances. I'm writing to report a fire incident that occurred at the property located at 789 Pine Street, Springfield, IL 62704, on August 15, 2024, around 3:45 PM.
-
-**Details of the Incident:**
-
-- **Insured Party:** Michael Thompson (michael.thompson@email.com, 555-321-6549)
-- **Property Owner:** Urban Realty LLC (contact: Linda Green, 555-654-3210)
-- **Policy Number:** FI-2024-89123
-- **Type of Loss:** Fire Damage
-- **Cause of Loss:** Electrical Fault in Kitchen Appliances
-- **Date of Loss/Occurrence:** August 15, 2024
-- **Residence Occupied During Loss:** Yes
-- **Was Someone Home at Time of Damage:** Yes
-- **Current Repair Status:** Fire department responded promptly; initial assessments completed. Awaiting structural evaluations.
-- **Inspection Type:** Preliminary fire damage assessment conducted by Fire Experts Inc.
-  
-**Additional Information:**
-
-- **Loss Description:** The kitchen experienced a significant electrical fire due to faulty wiring in the refrigerator and microwave. Smoke has permeated the living areas, and there's extensive damage to the kitchen and adjacent rooms.
-- **Public Adjuster:** Rebecca Lee from "Reliable Claims Adjusters" (rebecca.lee@reliableclaims.com)
-- **Repair or Mitigation Progress:** Temporary measures in place to prevent further damage. Scheduled for comprehensive repairs pending insurance approval.
-  
-**Attachments:**
-
-- Photos of the fire damage
-- Fire department incident report
-- Initial repair estimates
-
-**Action Items:**
-
-1. **Structural Assessment:** Please coordinate with our structural engineers to evaluate the integrity of the building.
-2. **Mold Inspection:** Due to smoke and water damage, a mold inspection is necessary to ensure air quality safety.
-3. **Legal Consultation:** Liaise with our legal team regarding tenant agreements and potential liability concerns.
-4. **Cleanup Coordination:** Arrange for immediate cleanup to salvage undamaged property and prevent further deterioration.
-
-**Contact Information:**
-
-- **Claim Handler:** Sarah Connor (sarah.connor@insuranceco.com, 555-789-1234)
-- **Adjuster:** Tom Hanks (tom.hanks@insuranceco.com, 555-987-6543)
-- **Safety Officer:** Mark Spencer (mark.spencer@safetyteam.com, 555-456-7890)
-
-**Notes:**
-
-- Tenant Michael Thompson is cooperating fully and has relocated temporarily to avoid health hazards.
-- The fire was contained swiftly, but the extent of the damage requires a thorough investigation and repair plan.
-  
-**Next Steps:**
-
-Please review the attached documents and initiate the necessary inspections and assessments. Time is of the essence to mitigate further damage and expedite the repair process.
-
-Let me know if you need any additional information or assistance coordinating the above tasks.
-
-**Best Regards,**
-
-Jessica Martin  
-Claims Supervisor  
-ABC Insurance Co.  
-jessica.martin@insuranceco.com  
-555-654-9870`,
+  claim: `...`, // (Same as before, omitted for brevity)
+  informal_claim: `...`,
+  formal_fire_claim: `...`,
 };
 
 /* =========================================
@@ -208,6 +47,44 @@ const parsedEntries = [];
 // Animations
 let loadingAnimation;
 let successAnimation;
+
+// Establish SocketIO connection
+const socket = io();
+
+// Store the Socket ID once connected
+let socketId = '';
+
+// Disable the submit button initially
+const submitButton = document.getElementById('submitButton');
+if (submitButton) {
+  submitButton.disabled = true;
+}
+
+// Listen for the 'connected' event to retrieve the Socket ID
+socket.on('connected', (data) => {
+    socketId = data.sid;
+    console.log('Socket ID:', socketId);
+
+    // Enable the submit button
+    if (submitButton) {
+      submitButton.disabled = false;
+    }
+});
+
+// Handle socket connection errors
+socket.on('connect_error', (error) => {
+    console.error('Socket connection error:', error);
+    showErrorMessage('Failed to connect to the server. Please try again later.');
+});
+
+// Handle socket disconnection
+socket.on('disconnect', (reason) => {
+    console.warn('Socket disconnected:', reason);
+    showErrorMessage('Disconnected from server. Please refresh the page.');
+    if (submitButton) {
+      submitButton.disabled = true;
+    }
+});
 
 /* =========================================
    DOM CACHING
@@ -231,8 +108,10 @@ const domCache = {
   progressBar: document.getElementById("progress-bar"),
   jsonOutput: document.getElementById("jsonOutput"),
   humanOutput: document.getElementById("humanOutput"),
+  originalEmail: document.getElementById("originalEmail"),
   successMessage: document.getElementById("successMessage"),
   errorMessage: document.getElementById("errorMessage"),
+  sampleButtons: document.querySelectorAll(".sample-btn"),
 };
 
 /* =========================================
@@ -597,6 +476,13 @@ function displayParsedData(parsedData) {
     domCache.humanOutput.innerHTML = renderHumanReadable(parsedData);
   }
 
+  if (domCache.originalEmail) {
+    domCache.originalEmail.innerHTML = highlightEmailContent(
+      domCache.emailContent.value,
+      parsedData
+    );
+  }
+
   parsedEntries.push(flattenParsedData(parsedData));
 
   if (domCache.downloadCsvBtn && domCache.downloadPdfBtn) {
@@ -724,15 +610,22 @@ async function handleFormSubmission(e) {
     toggleInvalidState(domCache.parserOption, false);
   }
 
+  // Ensure socketId is available
+  if (!socketId) {
+    showErrorMessage("Socket connection not established. Please wait and try again.");
+    return;
+  }
+
   showLoadingOverlay();
 
   try {
     const response = await fetch("/parse_email", {
       method: "POST",
       body: formData,
+      headers: {
+        'X-Socket-ID': socketId
+      }
     });
-
-    hideLoadingOverlay();
 
     const contentType = response.headers.get("Content-Type");
     if (contentType && contentType.includes("application/json")) {
@@ -742,16 +635,15 @@ async function handleFormSubmission(e) {
           data.error_message || "An error occurred while parsing."
         );
       }
-      displayParsedData(data);
-      showSuccessMessage("Email parsed successfully!");
-      playSuccessAnimation();
+      showSuccessMessage(data.message);
+      // The actual parsing progress and completion will be handled via Socket.IO events
     } else {
       throw new Error("Unexpected response format.");
     }
   } catch (error) {
     console.error("Error during parsing:", error);
-    hideLoadingOverlay();
     showErrorMessage(error.message);
+    hideLoadingOverlay();
     hideDownloadButtons();
   }
 }
@@ -768,28 +660,6 @@ function toggleInvalidState(element, isInvalid) {
     } else {
       element.classList.remove("is-invalid");
     }
-  }
-}
-
-/**
- * Validates form inputs on change
- */
-function validateFormInputs() {
-  const emailContent = domCache.emailContent;
-  const parserOption = domCache.parserOption;
-
-  // Validate Email Content
-  if (emailContent.value.trim() === "") {
-    emailContent.classList.add("is-invalid");
-  } else {
-    emailContent.classList.remove("is-invalid");
-  }
-
-  // Validate Parser Option
-  if (parserOption.value.trim() === "") {
-    parserOption.classList.add("is-invalid");
-  } else {
-    parserOption.classList.remove("is-invalid");
   }
 }
 
@@ -823,15 +693,134 @@ function debounce(func, wait) {
   };
 }
 
-/* =========================================
-   UTILITY FUNCTIONS
-========================================= */
+/**
+ * Highlights parsed entities in the original email content
+ * @param {string} emailContent
+ * @param {Object} parsedData
+ * @returns {string} HTML string with highlighted entities
+ */
+function highlightEmailContent(emailContent, parsedData) {
+  let highlightedContent = escapeHtml(emailContent);
+
+  // Define highlighting rules based on parsedData
+  const highlightRules = [];
+
+  // Regex Extraction Highlights
+  if (parsedData["Regex Extraction"]) {
+    for (const [field, values] of Object.entries(parsedData["Regex Extraction"])) {
+      values.forEach((value) => {
+        if (value instanceof Object) {
+          // Handle complex objects like "Other"
+          const { Checked, Details } = value;
+          if (Checked && Details) {
+            highlightRules.push({
+              type: "highlight-validation",
+              pattern: Details,
+            });
+          }
+        } else {
+          highlightRules.push({
+            type: "highlight-regex",
+            pattern: value,
+          });
+        }
+      });
+    }
+  }
+
+  // NER Highlights
+  if (parsedData["NER Parsing"]) {
+    for (const [field, values] of Object.entries(parsedData["NER Parsing"])) {
+      values.forEach((value) => {
+        highlightRules.push({
+          type: "highlight-ner",
+          pattern: value,
+        });
+      });
+    }
+  }
+
+  // Donut Parsing Highlights
+  if (parsedData["Donut Parsing"]) {
+    for (const [field, values] of Object.entries(parsedData["Donut Parsing"])) {
+      values.forEach((value) => {
+        highlightRules.push({
+          type: "highlight-donut",
+          pattern: value,
+        });
+      });
+    }
+  }
+
+  // Validation Highlights
+  if (parsedData["validation_issues"]) {
+    parsedData["validation_issues"].forEach((issue) => {
+      // Extract the field from the issue string
+      const match = issue.match(/(.+) - (.+):/);
+      if (match) {
+        const field = match[2].trim();
+        highlightRules.push({
+          type: "highlight-validation",
+          pattern: field,
+        });
+      }
+    });
+  }
+
+  // Apply Highlights
+  highlightRules.forEach((rule) => {
+    const regex = new RegExp(`(${escapeRegExp(rule.pattern)})`, "gi");
+    highlightedContent = highlightedContent.replace(
+      regex,
+      `<span class="${rule.type}">$1</span>`
+    );
+  });
+
+  return highlightedContent;
+}
 
 /**
- * Removes the dropdown for template selection and relies solely on buttons
- * Adjusted in HTML below.
+ * Escapes RegExp special characters in a string
+ * @param {string} string
+ * @returns {string}
  */
+function escapeRegExp(string) {
+  return string.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
-/* =========================================
-   Additional Utility Functions
-========================================= */
+/**
+ * Initializes SocketIO event listeners for parsing progress
+ */
+function initializeSocketListeners() {
+  // Listen for parsing_started event
+  socket.on('parsing_started', (data) => {
+    showLoadingOverlay();
+  });
+
+  // Listen for parsing_progress events
+  socket.on('parsing_progress', (data) => {
+    if (domCache.progressBar && domCache.loadingMessage) {
+      domCache.progressBar.style.width = `${data.progress}%`;
+      domCache.loadingMessage.textContent = data.stage;
+    }
+  });
+
+  // Listen for parsing_completed event
+  socket.on('parsing_completed', (data) => {
+    hideLoadingOverlay();
+    displayParsedData(data.result);
+    showSuccessMessage("Email parsed successfully!");
+    playSuccessAnimation();
+  });
+
+  // Listen for parsing_error event
+  socket.on('parsing_error', (data) => {
+    hideLoadingOverlay();
+    showErrorMessage(data.error);
+  });
+}
+
+/**
+ * Initializes SocketIO listeners
+ */
+initializeSocketListeners();

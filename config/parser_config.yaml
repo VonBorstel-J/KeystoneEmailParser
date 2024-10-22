@@ -1,0 +1,25 @@
+# config/parser_config.yaml
+
+models:
+  ner:
+    name: "dslim/bert-base-NER"
+    type: "ner"
+    timeout: 30
+  donut:
+    name: "naver-clova-ix/donut-base-finetuned-cord-v2"
+    type: "document"
+    timeout: 60
+  sequence:
+    name: "facebook/bart-large-cnn"
+    type: "summarization"
+    timeout: 45
+  validation:
+    name: "gpt2"
+    type: "text-generation"
+    timeout: 30
+
+processing:
+  batch_size: 1
+  max_length: 512
+  device: "auto"
+  fallback_to_cpu: true
