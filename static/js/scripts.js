@@ -52,38 +52,38 @@ let successAnimation;
 const socket = io();
 
 // Store the Socket ID once connected
-let socketId = '';
+let socketId = "";
 
 // Disable the submit button initially
-const submitButton = document.getElementById('submitButton');
+const submitButton = document.getElementById("submitButton");
 if (submitButton) {
   submitButton.disabled = true;
 }
 
-// Listen for the 'connected' event to retrieve the Socket ID
-socket.on('connected', (data) => {
-    socketId = data.sid;
-    console.log('Socket ID:', socketId);
+// Listen for the 'connect' event to retrieve the Socket ID
+socket.on("connect", () => {
+  socketId = socket.id;
+  console.log("Socket ID:", socketId);
 
-    // Enable the submit button
-    if (submitButton) {
-      submitButton.disabled = false;
-    }
+  // Enable the submit button
+  if (submitButton) {
+    submitButton.disabled = false;
+  }
 });
 
 // Handle socket connection errors
-socket.on('connect_error', (error) => {
-    console.error('Socket connection error:', error);
-    showErrorMessage('Failed to connect to the server. Please try again later.');
+socket.on("connect_error", (error) => {
+  console.error("Socket connection error:", error);
+  showErrorMessage("Failed to connect to the server. Please try again later.");
 });
 
 // Handle socket disconnection
-socket.on('disconnect', (reason) => {
-    console.warn('Socket disconnected:', reason);
-    showErrorMessage('Disconnected from server. Please refresh the page.');
-    if (submitButton) {
-      submitButton.disabled = true;
-    }
+socket.on("disconnect", (reason) => {
+  console.warn("Socket disconnected:", reason);
+  showErrorMessage("Disconnected from server. Please refresh the page.");
+  if (submitButton) {
+    submitButton.disabled = true;
+  }
 });
 
 /* =========================================
@@ -612,9 +612,15 @@ async function handleFormSubmission(e) {
 
   // Ensure socketId is available
   if (!socketId) {
-    showErrorMessage("Socket connection not established. Please wait and try again.");
+    showErrorMessage(
+      "Socket connection not established. Please wait and try again."
+    );
     return;
   }
+
+  // Append socket_id to formData
+  formData.append("socket_id", socketId);
+  console.log("Socket ID being sent:", socketId);
 
   showLoadingOverlay();
 
@@ -622,9 +628,7 @@ async function handleFormSubmission(e) {
     const response = await fetch("/parse_email", {
       method: "POST",
       body: formData,
-      headers: {
-        'X-Socket-ID': socketId
-      }
+      // Removed custom headers
     });
 
     const contentType = response.headers.get("Content-Type");
@@ -707,7 +711,9 @@ function highlightEmailContent(emailContent, parsedData) {
 
   // Regex Extraction Highlights
   if (parsedData["Regex Extraction"]) {
-    for (const [field, values] of Object.entries(parsedData["Regex Extraction"])) {
+    for (const [field, values] of Object.entries(
+      parsedData["Regex Extraction"]
+    )) {
       values.forEach((value) => {
         if (value instanceof Object) {
           // Handle complex objects like "Other"
@@ -793,12 +799,12 @@ function escapeRegExp(string) {
  */
 function initializeSocketListeners() {
   // Listen for parsing_started event
-  socket.on('parsing_started', (data) => {
+  socket.on("parsing_started", (data) => {
     showLoadingOverlay();
   });
 
   // Listen for parsing_progress events
-  socket.on('parsing_progress', (data) => {
+  socket.on("parsing_progress", (data) => {
     if (domCache.progressBar && domCache.loadingMessage) {
       domCache.progressBar.style.width = `${data.progress}%`;
       domCache.loadingMessage.textContent = data.stage;
@@ -806,7 +812,7 @@ function initializeSocketListeners() {
   });
 
   // Listen for parsing_completed event
-  socket.on('parsing_completed', (data) => {
+  socket.on("parsing_completed", (data) => {
     hideLoadingOverlay();
     displayParsedData(data.result);
     showSuccessMessage("Email parsed successfully!");
@@ -814,7 +820,7 @@ function initializeSocketListeners() {
   });
 
   // Listen for parsing_error event
-  socket.on('parsing_error', (data) => {
+  socket.on("parsing_error", (data) => {
     hideLoadingOverlay();
     showErrorMessage(data.error);
   });

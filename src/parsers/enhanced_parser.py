@@ -19,11 +19,41 @@ from transformers import DonutProcessor, VisionEncoderDecoderModel, pipeline
 from src.parsers.base_parser import BaseParser
 from src.utils.config_loader import ConfigLoader
 from src.utils.quickbase_schema import QUICKBASE_SCHEMA
-from src.utils.validation import validate_json  # Removed validate_against_schema import
-
+from src.utils.validation import validate_json
 
 LLM_TIMEOUT_SECONDS = 500
 
+# Constants to avoid duplicate string literals
+RESIDENCE_OCCUPIED = "Residence Occupied During Loss"
+SOMEONE_HOME = "Was Someone home at time of damage"
+ASSIGNMENT_TYPE = "Assignment Type"
+INSURED_INFO = "Insured Information"
+ADJUSTER_INFO = "Adjuster Information"
+REQUESTING_PARTY = "Requesting Party"
+PUBLIC_ADJUSTER = "Public Adjuster"
+JOB_TITLE = "Job Title"
+LOSS_ADDRESS = "Loss Address"
+ASSIGNMENT_INFO = "Assignment Information"
+DATE_OF_LOSS = "Date of Loss/Occurrence"
+POLICY_NUMBER = "Policy #"
+CAUSE_OF_LOSS = "Cause of loss"
+ADJUSTER_PHONE_NUMBER = "Adjuster Phone Number"
+ADJUSTER_EMAIL = "Adjuster Email"
+CONTACT_NUMBER = "Contact #"
+ATTACHMENTS = "Attachment(s)"
+CARRIER_CLAIM_NUMBER = "Carrier Claim Number"
+LOSS_DESCRIPTION = "Loss Description"
+INSPECTION_TYPE = "Inspection type"
+REPAIR_PROGRESS = "Repair or Mitigation Progress"
+SPECIAL_INSTRUCTIONS = "Additional details/Special Instructions"
+OWNER_TENANT = "Is the insured an Owner or a Tenant of the loss location?"
+NAME = "Name"
+
+# Additional Constants for Patterns
+EMAIL_PATTERN = r"^[\w\.-]+@[\w\.-]+\.\w+$"
+PHONE_PATTERN = r"^\+?\d[\d\- ]+$"
+POLICY_NUMBER_PATTERN = r"^[A-Z0-9\-]+$"
+CLAIM_NUMBER_PATTERN = r"^[A-Z0-9\-]+$"
 
 class TimeoutException(Exception):
     pass
@@ -69,7 +99,7 @@ class EnhancedParser(BaseParser):
             self.sid = sid
             self.timeouts = self._set_timeouts()
             self.logger.info("EnhancedParser initialized successfully.")
-        except Exception as e:
+        except (ValueError, OSError) as e:
             self.logger.error(
                 "Error during EnhancedParser initialization: %s", e, exc_info=True
             )
@@ -113,7 +143,7 @@ class EnhancedParser(BaseParser):
                 device=0 if self.device == "cuda" else -1,
             )
             self.logger.info("Loaded NER model '%s' successfully.", repo_id)
-        except Exception as e:
+        except (OSError, ValueError) as e:
             self.logger.error(
                 "Failed to load NER model '%s': %s", repo_id, e, exc_info=True
             )
@@ -131,7 +161,7 @@ class EnhancedParser(BaseParser):
             )
             self.donut_model.to(self.device)
             self.logger.info("Loaded Donut model '%s' successfully.", repo_id)
-        except Exception as e:
+        except (OSError, ValueError) as e:
             self.logger.error(
                 "Failed to load Donut model '%s': %s", repo_id, e, exc_info=True
             )
@@ -149,7 +179,7 @@ class EnhancedParser(BaseParser):
                 device=0 if self.device == "cuda" else -1,
             )
             self.logger.info("Loaded Sequence Model '%s' successfully.", repo_id)
-        except Exception as e:
+        except (OSError, ValueError) as e:
             self.logger.error(
                 "Failed to load Sequence Model '%s': %s", repo_id, e, exc_info=True
             )
@@ -173,20 +203,34 @@ class EnhancedParser(BaseParser):
                 device=0 if self.device == "cuda" else -1,
             )
             self.logger.info("Loaded Validation Model '%s' successfully.", repo_id)
-        except Exception as e:
+        except (OSError, ValueError) as e:
             self.logger.error("Failed to load Validation Model: %s", e, exc_info=True)
             self.validation_pipeline = None
 
     def _set_timeouts(self) -> Dict[str, int]:
         timeouts = {
-            "regex_extraction": self.config.get("model_timeouts", {}).get("regex_extraction", 30),
+            "regex_extraction": self.config.get("model_timeouts", {}).get(
+                "regex_extraction", 30
+            ),
             "ner_parsing": self.config.get("model_timeouts", {}).get("ner_parsing", 30),
-            "donut_parsing": self.config.get("model_timeouts", {}).get("donut_parsing", 60),
-            "sequence_model_parsing": self.config.get("model_timeouts", {}).get("sequence_model_parsing", 45),
-            "validation_parsing": self.config.get("model_timeouts", {}).get("validation_parsing", 30),
-            "schema_validation": self.config.get("model_timeouts", {}).get("schema_validation", 30),
-            "post_processing": self.config.get("model_timeouts", {}).get("post_processing", 30),
-            "json_validation": self.config.get("model_timeouts", {}).get("json_validation", 30),
+            "donut_parsing": self.config.get("model_timeouts", {}).get(
+                "donut_parsing", 60
+            ),
+            "sequence_model_parsing": self.config.get("model_timeouts", {}).get(
+                "sequence_model_parsing", 45
+            ),
+            "validation_parsing": self.config.get("model_timeouts", {}).get(
+                "validation_parsing", 30
+            ),
+            "schema_validation": self.config.get("model_timeouts", {}).get(
+                "schema_validation", 30
+            ),
+            "post_processing": self.config.get("model_timeouts", {}).get(
+                "post_processing", 30
+            ),
+            "json_validation": self.config.get("model_timeouts", {}).get(
+                "json_validation", 30
+            ),
         }
         self.logger.debug("Set processing timeouts: %s", timeouts)
         return timeouts
@@ -243,8 +287,6 @@ class EnhancedParser(BaseParser):
                         "No document image provided for Donut parsing. Skipping this stage."
                     )
                     continue
-                if stage_name.startswith("Stage"):
-                    continue
                 self.logger.info("Stage: %s", stage_name)
                 timeout_seconds = self.timeouts.get(
                     stage_name.lower().replace(" ", "_"), 60
@@ -284,13 +326,15 @@ class EnhancedParser(BaseParser):
             os.path.dirname(__file__), "importSchema.txt"
         )
         try:
-            with open(schema_template_path, "r") as f:
+            with open(schema_template_path, "r", encoding="utf-8") as f:
                 schema_template = f.read()
             self.logger.debug("Loaded schema template from %s", schema_template_path)
         except FileNotFoundError:
-            self.logger.error("Schema template file not found at %s", schema_template_path)
+            self.logger.error(
+                "Schema template file not found at %s", schema_template_path
+            )
             return parsed_data
-        except Exception as e:
+        except (OSError, ValueError) as e:
             self.logger.error("Error reading schema template: %s", e, exc_info=True)
             return parsed_data
 
@@ -344,14 +388,12 @@ class EnhancedParser(BaseParser):
             self.logger.error("No input provided")
             return False
         if document_image and not isinstance(document_image, (str, Image.Image)):
-            self.logger.error(f"Invalid document_image type: {type(document_image)}")
+            self.logger.error("Invalid document_image type: %s", type(document_image))
             return False
         return True
 
     def validate_against_schema(
-        self,
-        parsed_data: Dict[str, Any],
-        schema_template: str
+        self, parsed_data: Dict[str, Any], schema_template: str
     ) -> Tuple[bool, List[str], Dict[str, Any]]:
         """
         Validates parsed data against the import schema template and formats it accordingly.
@@ -404,8 +446,8 @@ class EnhancedParser(BaseParser):
 
                     # Special handling for boolean fields
                     if field in [
-                        "Residence Occupied During Loss",
-                        "Was Someone home at time of damage",
+                        RESIDENCE_OCCUPIED,
+                        SOMEONE_HOME,
                     ]:
                         formatted_value = "Yes" if formatted_value else "No"
 
@@ -416,8 +458,8 @@ class EnhancedParser(BaseParser):
                     formatted_data[section][field] = formatted_value
 
         # Handle the "Other" checkbox specially
-        if "Assignment Type" in parsed_data:
-            other_data = parsed_data["Assignment Type"].get(
+        if ASSIGNMENT_TYPE in parsed_data:
+            other_data = parsed_data[ASSIGNMENT_TYPE].get(
                 "Other", [{"Checked": False, "Details": ""}]
             )[0]
             formatted_data["Check the box of applicable assignment type"] = {
@@ -458,7 +500,7 @@ class EnhancedParser(BaseParser):
         self.cleanup_resources()
 
     def recover_from_failure(self, stage: str) -> bool:
-        self.logger.warning(f"Attempting to recover from {stage} failure")
+        self.logger.warning("Attempting to recover from %s failure", stage)
         if stage.lower().replace(" ", "_") in [
             "regex_extraction",
             "ner_parsing",
@@ -486,7 +528,7 @@ class EnhancedParser(BaseParser):
             else:
                 self.logger.error("Reinitialization failed.")
                 return False
-        except Exception as e:
+        except (OSError, ValueError) as e:
             self.logger.error(
                 "Error during model reinitialization: %s", e, exc_info=True
             )
@@ -514,7 +556,7 @@ class EnhancedParser(BaseParser):
                 )
                 return {}
             return self.ner_parsing(email_content)
-        except Exception as e:
+        except (OSError, ValueError) as e:
             self.logger.error("Error during NER Parsing stage: %s", e, exc_info=True)
             return {}
 
@@ -533,7 +575,7 @@ class EnhancedParser(BaseParser):
                 )
                 return {}
             return self.donut_parsing(document_image)
-        except Exception as e:
+        except (OSError, ValueError) as e:
             self.logger.error("Error during Donut Parsing stage: %s", e, exc_info=True)
             return {}
 
@@ -552,7 +594,7 @@ class EnhancedParser(BaseParser):
                 )
                 return {}
             return self.sequence_model_parsing_with_timeout(email_content)
-        except Exception as e:
+        except (OSError, ValueError) as e:
             self.logger.error(
                 "Error during Sequence Model Parsing stage: %s", e, exc_info=True
             )
@@ -567,7 +609,7 @@ class EnhancedParser(BaseParser):
         except ConcurrentTimeoutError:
             self.logger.error("Sequence Model parsing timed out.", exc_info=True)
             return {}
-        except Exception as e:
+        except (OSError, ValueError) as e:
             self.logger.error(
                 "Error during Sequence Model parsing with timeout: %s", e, exc_info=True
             )
@@ -585,7 +627,7 @@ class EnhancedParser(BaseParser):
             summary_text = summary[0]["summary_text"]
             self.logger.debug("Sequence Model Summary: %s", summary_text)
             return self.sequence_model_extract(summary_text)
-        except Exception as e:
+        except (OSError, ValueError) as e:
             self.logger.error(
                 "Error during Sequence Model inference: %s", e, exc_info=True
             )
@@ -616,7 +658,7 @@ class EnhancedParser(BaseParser):
                 "Sequence Model Extraction Result: %s", extracted_sequence
             )
             return extracted_sequence
-        except Exception as e:
+        except (OSError, ValueError) as e:
             self.logger.error(
                 "Error during Sequence Model extraction: %s", e, exc_info=True
             )
@@ -634,17 +676,68 @@ class EnhancedParser(BaseParser):
             return
         self.logger.debug("Executing Validation Parsing stage.")
         try:
-            self._lazy_load_validation_model()
-            if self.validation_pipeline is None:
-                self.logger.warning(
-                    "Validation Model pipeline is not available. Skipping Validation Parsing."
-                )
-                return
-            self.validation_parsing(email_content, parsed_data)
-        except Exception as e:
+            self._stage_validation_internal(email_content, parsed_data)
+        except (OSError, ValueError) as e:
             self.logger.error(
                 "Error during Validation Parsing stage: %s", e, exc_info=True
             )
+
+    def _stage_validation_internal(
+        self, email_content: str, parsed_data: Dict[str, Any]
+    ):
+        """Internal method for validation parsing."""
+        self.logger.debug("Starting validation parsing.")
+        inconsistencies = []
+        try:
+            for section, fields in parsed_data.items():
+                for field, value in fields.items():
+                    if isinstance(value, list) and value:
+                        value = value[0]
+                    if isinstance(value, str) and value != "N/A":
+                        if value.lower() not in email_content.lower():
+                            inconsistencies.append(
+                                f"Inconsistency in {section} - {field}: '{value}' not found in email content"
+                            )
+            required_fields = [
+                (REQUESTING_PARTY, "Insurance Company"),
+                (REQUESTING_PARTY, "Handler"),
+                (REQUESTING_PARTY, CARRIER_CLAIM_NUMBER),
+                (INSURED_INFO, NAME),
+                (INSURED_INFO, CONTACT_NUMBER),
+                (INSURED_INFO, LOSS_ADDRESS),
+                (INSURED_INFO, PUBLIC_ADJUSTER),
+                (
+                    INSURED_INFO,
+                    OWNER_TENANT,
+                ),
+                (ADJUSTER_INFO, "Adjuster Name"),
+                (ADJUSTER_INFO, ADJUSTER_PHONE_NUMBER),
+                (ADJUSTER_INFO, ADJUSTER_EMAIL),
+                (ADJUSTER_INFO, JOB_TITLE),
+                (ADJUSTER_INFO, POLICY_NUMBER),
+                (ASSIGNMENT_INFO, DATE_OF_LOSS),
+                (ASSIGNMENT_INFO, CAUSE_OF_LOSS),
+                (ASSIGNMENT_INFO, LOSS_DESCRIPTION),
+                (ASSIGNMENT_INFO, RESIDENCE_OCCUPIED),
+                (ASSIGNMENT_INFO, SOMEONE_HOME),
+                (ASSIGNMENT_INFO, REPAIR_PROGRESS),
+                (ASSIGNMENT_INFO, "Type"),
+                (ASSIGNMENT_INFO, INSPECTION_TYPE),
+            ]
+            for section, field in required_fields:
+                if not parsed_data.get(section, {}).get(field):
+                    inconsistencies.append(
+                        f"Missing required field: {section} - {field}"
+                    )
+            if inconsistencies:
+                parsed_data["validation_issues"] = parsed_data.get(
+                    "validation_issues", []
+                ) + inconsistencies
+                self.logger.warning("Validation issues found: %s", inconsistencies)
+            else:
+                self.logger.info("Validation parsing completed successfully.")
+        except (OSError, ValueError) as e:
+            self.logger.error("Error during validation parsing: %s", e, exc_info=True)
 
     def _stage_schema_validation(self, parsed_data: Optional[Dict[str, Any]] = None):
         if not parsed_data:
@@ -655,7 +748,7 @@ class EnhancedParser(BaseParser):
         self.logger.debug("Executing Schema Validation stage.")
         try:
             self._stage_schema_validation_internal(parsed_data)
-        except Exception as e:
+        except (OSError, ValueError) as e:
             self.logger.error(
                 "Error during Schema Validation stage: %s", e, exc_info=True
             )
@@ -730,11 +823,11 @@ class EnhancedParser(BaseParser):
 
             # Update parsed data with validation results
             if missing_fields:
-                parsed_data["missing_fields"] = missing_fields
+                parsed_data["missing_fields"] = parsed_data.get("missing_fields", []) + missing_fields
                 self.logger.info("Missing fields identified: %s", missing_fields)
 
             if inconsistent_fields:
-                parsed_data["inconsistent_fields"] = inconsistent_fields
+                parsed_data["inconsistent_fields"] = parsed_data.get("inconsistent_fields", []) + inconsistent_fields
                 self.logger.info(
                     "Inconsistent fields identified: %s", inconsistent_fields
                 )
@@ -745,7 +838,7 @@ class EnhancedParser(BaseParser):
                 )
                 self.logger.warning("Validation errors found: %s", validation_errors)
 
-        except Exception as e:
+        except (OSError, ValueError) as e:
             self.logger.error("Error during schema validation: %s", e, exc_info=True)
             parsed_data["validation_issues"] = parsed_data.get(
                 "validation_issues", []
@@ -762,7 +855,7 @@ class EnhancedParser(BaseParser):
         self.logger.debug("Executing Post Processing stage.")
         try:
             return self._stage_post_processing_internal(parsed_data)
-        except Exception as e:
+        except (OSError, ValueError) as e:
             self.logger.error(
                 "Error during Post Processing stage: %s", e, exc_info=True
             )
@@ -796,32 +889,52 @@ class EnhancedParser(BaseParser):
                         if "Date" in field or "Loss/Occurrence" in field:
                             formatted_date = self.format_date(value)
                             parsed_data[section][field][idx] = formatted_date
-                            self.logger.debug(f"Formatted date for {field}: {formatted_date}")
+                            self.logger.debug(
+                                "Formatted date for %s: %s", field, formatted_date
+                            )
 
                         # Phone number formatting
-                        if any(phone_term in field for phone_term in ["Phone Number", "Contact #", "Phone"]):
+                        if any(
+                            phone_term in field
+                            for phone_term in [CONTACT_NUMBER, "Phone Number", "Phone"]
+                        ):
                             formatted_phone = self.format_phone_number(value)
                             parsed_data[section][field][idx] = formatted_phone
-                            self.logger.debug(f"Formatted phone number for {field}: {formatted_phone}")
+                            self.logger.debug(
+                                "Formatted phone number for %s: %s",
+                                field,
+                                formatted_phone,
+                            )
 
                         # Boolean value standardization
-                        if field in ["Wind", "Structural", "Hail", "Foundation", 
-                                     "Residence Occupied During Loss", 
-                                     "Was Someone home at time of damage"]:
+                        if field in [
+                            "Wind",
+                            "Structural",
+                            "Hail",
+                            "Foundation",
+                            RESIDENCE_OCCUPIED,
+                            SOMEONE_HOME,
+                        ]:
                             if isinstance(value, str):
-                                parsed_data[section][field][idx] = value.lower() == "yes" or value.lower() == "true"
+                                parsed_data[section][field][idx] = (
+                                    value.lower() == "yes" or value.lower() == "true"
+                                )
 
                         # Address formatting
                         if "Address" in field:
                             formatted_address = self._format_address(value)
                             parsed_data[section][field][idx] = formatted_address
-                            self.logger.debug(f"Formatted address for {field}: {formatted_address}")
+                            self.logger.debug(
+                                "Formatted address for %s: %s", field, formatted_address
+                            )
 
                         # Email formatting
                         if "Email" in field:
                             formatted_email = value.lower().strip()
                             parsed_data[section][field][idx] = formatted_email
-                            self.logger.debug(f"Formatted email for {field}: {formatted_email}")
+                            self.logger.debug(
+                                "Formatted email for %s: %s", field, formatted_email
+                            )
 
                         # Clean up text fields
                         if isinstance(value, str):
@@ -829,17 +942,19 @@ class EnhancedParser(BaseParser):
                             parsed_data[section][field][idx] = cleaned_text
 
             # Verify attachments if present
-            attachments = parsed_data.get("Attachment(s)", {}).get("Files", [])
+            attachments = parsed_data.get(ATTACHMENTS, {}).get("Files", [])
             if attachments:
-                if not self.verify_attachments(attachments, parsed_data.get("email_content", "")):
+                if not self.verify_attachments(
+                    attachments, parsed_data.get("email_content", "")
+                ):
                     parsed_data.setdefault("user_notifications", []).append(
                         "Attachments mentioned in email may be missing or inconsistent."
                     )
 
             return parsed_data
 
-        except Exception as e:
-            self.logger.error(f"Error during post-processing: {str(e)}", exc_info=True)
+        except (OSError, ValueError) as e:
+            self.logger.error("Error during post-processing: %s", e, exc_info=True)
             return parsed_data
 
     def _stage_json_validation(self, parsed_data: Optional[Dict[str, Any]] = None):
@@ -851,7 +966,7 @@ class EnhancedParser(BaseParser):
         self.logger.debug("Executing JSON Validation stage.")
         try:
             self._stage_json_validation_internal(parsed_data)
-        except Exception as e:
+        except (OSError, ValueError) as e:
             self.logger.error(
                 "Error during JSON Validation stage: %s", e, exc_info=True
             )
@@ -867,7 +982,7 @@ class EnhancedParser(BaseParser):
                 parsed_data["validation_issues"] = parsed_data.get(
                     "validation_issues", []
                 ) + [error_message]
-        except Exception as e:
+        except (OSError, ValueError) as e:
             self.logger.error("Error during JSON validation: %s", e, exc_info=True)
             parsed_data["validation_issues"] = parsed_data.get(
                 "validation_issues", []
@@ -878,49 +993,57 @@ class EnhancedParser(BaseParser):
             self.logger.debug("Starting NER pipeline.")
             entities = self.ner_pipeline(email_content)
             extracted_entities: Dict[str, Any] = {}
-            
+
             label_field_mapping = {
                 "PER": [
-                    ("Insured Information", "Name"),
-                    ("Adjuster Information", "Adjuster Name"),
-                    ("Requesting Party", "Handler"),
-                    ("Insured Information", "Public Adjuster")
+                    (INSURED_INFO, NAME),
+                    (ADJUSTER_INFO, "Adjuster Name"),
+                    (REQUESTING_PARTY, "Handler"),
+                    (INSURED_INFO, PUBLIC_ADJUSTER),
                 ],
                 "ORG": [
-                    ("Requesting Party", "Insurance Company"),
-                    ("Adjuster Information", "Job Title")
+                    (REQUESTING_PARTY, "Insurance Company"),
+                    (ADJUSTER_INFO, JOB_TITLE),
                 ],
                 "LOC": [
-                    ("Insured Information", "Loss Address"),
-                    ("Adjuster Information", "Address")
+                    (INSURED_INFO, LOSS_ADDRESS),
+                    (ADJUSTER_INFO, "Address"),
                 ],
-                "DATE": [("Assignment Information", "Date of Loss/Occurrence")],
-                "MONEY": [("Assignment Information", "Estimated Damage")],
+                "DATE": [(ASSIGNMENT_INFO, DATE_OF_LOSS)],
+                "MONEY": [(ASSIGNMENT_INFO, "Estimated Damage")],
                 "GPE": [
-                    ("Insured Information", "Loss Address"),
-                    ("Adjuster Information", "Address")
+                    (INSURED_INFO, LOSS_ADDRESS),
+                    (ADJUSTER_INFO, "Address"),
                 ],
-                "PRODUCT": [("Adjuster Information", "Policy #")],
-                "EVENT": [("Assignment Information", "Cause of loss")],
+                "PRODUCT": [(ADJUSTER_INFO, POLICY_NUMBER)],
+                "EVENT": [(ASSIGNMENT_INFO, CAUSE_OF_LOSS)],
                 "PHONE": [
-                    ("Insured Information", "Contact #"),
-                    ("Adjuster Information", "Adjuster Phone Number")
+                    (INSURED_INFO, CONTACT_NUMBER),
+                    (ADJUSTER_INFO, ADJUSTER_PHONE_NUMBER),
                 ],
-                "EMAIL": [("Adjuster Information", "Adjuster Email")]
+                "EMAIL": [(ADJUSTER_INFO, ADJUSTER_EMAIL)],
             }
-            
+
             for entity in entities:
                 label = entity.get("entity_group")
                 text = entity.get("word")
                 if label and text:
                     mappings = label_field_mapping.get(label, [])
                     for section, field in mappings:
-                        extracted_entities.setdefault(section, {}).setdefault(field, []).append(text.strip())
-                        self.logger.debug(f"Extracted {label} entity '{text}' mapped to {section} - {field}")
-            
+                        extracted_entities.setdefault(section, {}).setdefault(
+                            field, []
+                        ).append(text.strip())
+                        self.logger.debug(
+                            "Extracted %s entity '%s' mapped to %s - %s",
+                            label,
+                            text,
+                            section,
+                            field,
+                        )
+
             return extracted_entities
-        except Exception as e:
-            self.logger.error(f"Error during NER parsing: {str(e)}", exc_info=True)
+        except (OSError, ValueError) as e:
+            self.logger.error("Error during NER parsing: %s", e, exc_info=True)
             return {}
 
     def donut_parsing(self, document_image: Union[str, Image.Image]) -> Dict[str, Any]:
@@ -930,10 +1053,11 @@ class EnhancedParser(BaseParser):
                 document_image = Image.open(document_image).convert("RGB")
                 self.logger.debug("Loaded image from path.")
             elif isinstance(document_image, Image.Image):
-                pass
+                pass  # Image is already an Image object; no action needed
             else:
                 self.logger.warning(
-                    f"Invalid document_image type: {type(document_image)}. Skipping Donut parsing."
+                    "Invalid document_image type: %s. Skipping Donut parsing.",
+                    type(document_image),
                 )
                 return {}
             encoding = self.donut_processor(document_image, return_tensors="pt")
@@ -962,7 +1086,7 @@ class EnhancedParser(BaseParser):
             mapped_data = self.map_donut_output_to_schema(json_data)
             self.logger.debug("Donut Parsing Result: %s", mapped_data)
             return mapped_data
-        except Exception as e:
+        except (OSError, ValueError) as e:
             self.logger.error("Error during Donut parsing: %s", e, exc_info=True)
             return {}
 
@@ -970,37 +1094,51 @@ class EnhancedParser(BaseParser):
         mapped_data: Dict[str, Any] = {}
         try:
             field_mapping = {
-                "policy_number": ("Adjuster Information", "Policy #"),
-                "claim_number": ("Requesting Party", "Carrier Claim Number"),
-                "insured_name": ("Insured Information", "Name"),
-                "loss_address": ("Insured Information", "Loss Address"),
-                "adjuster_name": ("Adjuster Information", "Adjuster Name"),
-                "adjuster_phone": ("Adjuster Information", "Adjuster Phone Number"),
-                "adjuster_email": ("Adjuster Information", "Adjuster Email"),
-                "date_of_loss": ("Assignment Information", "Date of Loss/Occurrence"),
-                "cause_of_loss": ("Assignment Information", "Cause of loss"),
-                "loss_description": ("Assignment Information", "Loss Description"),
-                "inspection_type": ("Assignment Information", "Inspection type"),
-                "repair_progress": ("Assignment Information", "Repair or Mitigation Progress"),
-                "residence_occupied": ("Assignment Information", "Residence Occupied During Loss"),
-                "someone_home": ("Assignment Information", "Was Someone home at time of damage"),
-                "type": ("Assignment Information", "Type"),
-                "additional_instructions": ("Additional details/Special Instructions", "Details"),
-                "attachments": ("Attachment(s)", "Files")
+                "policy_number": (ADJUSTER_INFO, POLICY_NUMBER),
+                "claim_number": (REQUESTING_PARTY, CARRIER_CLAIM_NUMBER),
+                "insured_name": (INSURED_INFO, NAME),
+                "loss_address": (INSURED_INFO, LOSS_ADDRESS),
+                "adjuster_name": (ADJUSTER_INFO, "Adjuster Name"),
+                "adjuster_phone": (ADJUSTER_INFO, ADJUSTER_PHONE_NUMBER),
+                "adjuster_email": (ADJUSTER_INFO, ADJUSTER_EMAIL),
+                "date_of_loss": (ASSIGNMENT_INFO, DATE_OF_LOSS),
+                "cause_of_loss": (ASSIGNMENT_INFO, CAUSE_OF_LOSS),
+                "loss_description": (ASSIGNMENT_INFO, LOSS_DESCRIPTION),
+                "inspection_type": (ASSIGNMENT_INFO, INSPECTION_TYPE),
+                "repair_progress": (
+                    ASSIGNMENT_INFO,
+                    REPAIR_PROGRESS,
+                ),
+                "residence_occupied": (
+                    ASSIGNMENT_INFO,
+                    RESIDENCE_OCCUPIED,
+                ),
+                "someone_home": (
+                    ASSIGNMENT_INFO,
+                    SOMEONE_HOME,
+                ),
+                "type": (ASSIGNMENT_INFO, "Type"),
+                "additional_instructions": (
+                    SPECIAL_INSTRUCTIONS,
+                    "Details",
+                ),
+                "attachments": (ATTACHMENTS, "Files"),
             }
             for item in donut_json.get("form", []):
                 field_name = item.get("name")
                 field_value = item.get("value")
                 if field_name in field_mapping:
                     section, qb_field = field_mapping[field_name]
-                    
+
                     # Handle boolean values
                     if field_name.startswith("assignment_"):
                         field_value = bool(field_value)
                     elif field_name in ["residence_occupied", "someone_home"]:
                         field_value = field_value.lower() == "yes"
-                    
-                    mapped_data.setdefault(section, {}).setdefault(qb_field, []).append(field_value)
+
+                    mapped_data.setdefault(section, {}).setdefault(qb_field, []).append(
+                        field_value
+                    )
                     self.logger.debug(
                         "Mapped Donut field '%s' to '%s - %s' with value '%s'",
                         field_name,
@@ -1009,7 +1147,7 @@ class EnhancedParser(BaseParser):
                         field_value,
                     )
             return mapped_data
-        except Exception as e:
+        except (OSError, ValueError) as e:
             self.logger.error(
                 "Error during mapping Donut output to schema: %s", e, exc_info=True
             )
@@ -1024,59 +1162,59 @@ class EnhancedParser(BaseParser):
                 "Handler": r"Handler:\s*(.+?)\n",
                 "Carrier Claim Number": r"Carrier Claim Number:\s*(\S+)",
                 "Name": r"Name:\s*(.+?)\n",
-                "Contact #": r"Contact #:\s*(\+?\d[\d\- ]+)",
-                "Loss Address": r"Loss Address:\s*(.+?)\n",
-                "Public Adjuster": r"Public Adjuster:\s*(.+?)\n",
-                "Is the insured an Owner or a Tenant of the loss location?": r"Is the insured an Owner or a Tenant of the loss location\?\s*(Yes|No)",
+                CONTACT_NUMBER: r"Contact #:\s*(\+?\d[\d\- ]+)",
+                LOSS_ADDRESS: r"Loss Address:\s*(.+?)\n",
+                PUBLIC_ADJUSTER: r"Public Adjuster:\s*(.+?)\n",
+                OWNER_TENANT: r"Is the insured an Owner or a Tenant of the loss location\?\s*(Yes|No)",
                 "Adjuster Name": r"Adjuster Name:\s*(.+?)\n",
-                "Adjuster Phone Number": r"Adjuster Phone Number:\s*(\+?\d[\d\- ]+)",
-                "Adjuster Email": r"Adjuster Email:\s*([\w\.-]+@[\w\.-]+)",
-                "Job Title": r"Job Title:\s*(.+?)\n",
+                ADJUSTER_PHONE_NUMBER: r"Adjuster Phone Number:\s*(\+?\d[\d\- ]+)",
+                ADJUSTER_EMAIL: r"Adjuster Email:\s*([\w\.-]+@[\w\.-]+)",
+                JOB_TITLE: r"Job Title:\s*(.+?)\n",
                 "Address": r"Address:\s*(.+?)\n",
-                "Policy #": r"Policy #:\s*(POL\d{6})",
-                "Date of Loss/Occurrence": r"Date of Loss/Occurrence:\s*([^\n]+)",
-                "Cause of loss": r"Cause of loss:\s*([^\n]+)",
+                POLICY_NUMBER: r"Policy #:\s*(POL\d{6})",
+                DATE_OF_LOSS: r"Date of Loss/Occurrence:\s*([^\n]+)",
+                CAUSE_OF_LOSS: r"Cause of loss:\s*([^\n]+)",
                 "Facts of Loss": r"Facts of Loss:\s*([\s\S]+?)\n\n",
-                "Loss Description": r"Loss Description:\s*([\s\S]+?)\n\n",
-                "Residence Occupied During Loss": r"Residence Occupied During Loss:\s*(Yes|No)",
-                "Was Someone home at time of damage": r"Was Someone home at time of damage:\s*(Yes|No)",
-                "Repair or Mitigation Progress": r"Repair or Mitigation Progress:\s*([\s\S]+?)\n\n",
+                LOSS_DESCRIPTION: r"Loss Description:\s*([\s\S]+?)\n\n",
+                RESIDENCE_OCCUPIED: r"Residence Occupied During Loss:\s*(Yes|No)",
+                SOMEONE_HOME: r"Was Someone home at time of damage:\s*(Yes|No)",
+                REPAIR_PROGRESS: r"Repair or Mitigation Progress:\s*([\s\S]+?)\n\n",
                 "Type": r"Type:\s*(.+?)\n",
-                "Inspection type": r"Inspection type:\s*(.+?)\n",
+                INSPECTION_TYPE: r"Inspection type:\s*(.+?)\n",
                 "Wind": r"Wind\s*\[([xX\s]*)\]",
                 "Structural": r"Structural\s*\[([xX\s]*)\]",
                 "Hail": r"Hail\s*\[([xX\s]*)\]",
                 "Foundation": r"Foundation\s*\[([xX\s]*)\]",
                 "Other": r"Other\s*\[([xX\s]*)\] - provide details:\s*(.+?)\n",
-                "Additional details/Special Instructions": r"Additional details/Special Instructions:\s*([\s\S]+?)\n\n",
-                "Attachment(s)": r"Attachment\(s\):\s*(.+?)\n",
+                SPECIAL_INSTRUCTIONS: r"Additional details/Special Instructions:\s*([\s\S]+?)\n\n",
+                ATTACHMENTS: r"Attachment\(s\):\s*(.+?)\n",
             }
             section_mapping = {
-                "Insurance Company": "Requesting Party",
-                "Handler": "Requesting Party",
-                "Carrier Claim Number": "Requesting Party",
-                "Name": "Insured Information",
-                "Contact #": "Insured Information",
-                "Loss Address": "Insured Information",
-                "Public Adjuster": "Insured Information",
-                "Is the insured an Owner or a Tenant of the loss location?": "Insured Information",
-                "Adjuster Name": "Adjuster Information",
-                "Adjuster Phone Number": "Adjuster Information",
-                "Adjuster Email": "Adjuster Information",
-                "Job Title": "Adjuster Information",
-                "Address": "Adjuster Information",
-                "Policy #": "Adjuster Information",
-                "Date of Loss/Occurrence": "Assignment Information",
-                "Cause of loss": "Assignment Information",
-                "Facts of Loss": "Assignment Information",
-                "Loss Description": "Assignment Information",
-                "Residence Occupied During Loss": "Assignment Information",
-                "Was Someone home at time of damage": "Assignment Information",
-                "Repair or Mitigation Progress": "Assignment Information",
-                "Type": "Assignment Information",
-                "Inspection type": "Assignment Information",
-                "Additional details/Special Instructions": "Additional details/Special Instructions",
-                "Attachment(s)": "Attachment(s)",
+                "Insurance Company": REQUESTING_PARTY,
+                "Handler": REQUESTING_PARTY,
+                "Carrier Claim Number": REQUESTING_PARTY,
+                "Name": INSURED_INFO,
+                CONTACT_NUMBER: INSURED_INFO,
+                LOSS_ADDRESS: INSURED_INFO,
+                PUBLIC_ADJUSTER: INSURED_INFO,
+                OWNER_TENANT: INSURED_INFO,
+                "Adjuster Name": ADJUSTER_INFO,
+                ADJUSTER_PHONE_NUMBER: ADJUSTER_INFO,
+                ADJUSTER_EMAIL: ADJUSTER_INFO,
+                JOB_TITLE: ADJUSTER_INFO,
+                "Address": ADJUSTER_INFO,
+                POLICY_NUMBER: ADJUSTER_INFO,
+                DATE_OF_LOSS: ASSIGNMENT_INFO,
+                CAUSE_OF_LOSS: ASSIGNMENT_INFO,
+                "Facts of Loss": ASSIGNMENT_INFO,
+                LOSS_DESCRIPTION: ASSIGNMENT_INFO,
+                RESIDENCE_OCCUPIED: ASSIGNMENT_INFO,
+                SOMEONE_HOME: ASSIGNMENT_INFO,
+                REPAIR_PROGRESS: ASSIGNMENT_INFO,
+                "Type": ASSIGNMENT_INFO,
+                INSPECTION_TYPE: ASSIGNMENT_INFO,
+                SPECIAL_INSTRUCTIONS: SPECIAL_INSTRUCTIONS,
+                ATTACHMENTS: ATTACHMENTS,
             }
 
             for field, pattern in patterns.items():
@@ -1088,14 +1226,14 @@ class EnhancedParser(BaseParser):
                         checked = bool(match.group(1).strip().lower() == "x")
                         details = match.group(2).strip()
                         value = {"Checked": checked, "Details": details}
-                        extracted_data.setdefault("Assignment Type", {}).setdefault(
+                        extracted_data.setdefault(ASSIGNMENT_TYPE, {}).setdefault(
                             field, []
                         ).append(value)
                         self.logger.debug("Extracted %s: %s", field, value)
                         continue
                     elif field in [
-                        "Residence Occupied During Loss",
-                        "Was Someone home at time of damage",
+                        RESIDENCE_OCCUPIED,
+                        SOMEONE_HOME,
                     ]:
                         value = bool(match.group(1).strip().lower() == "yes")
                     else:
@@ -1114,24 +1252,25 @@ class EnhancedParser(BaseParser):
                         self.logger.debug("Extracted %s: %s", field, value)
             self.logger.debug("Regex Extraction Result: %s", extracted_data)
             return extracted_data
-        except Exception as e:
+        except (OSError, ValueError) as e:
             self.logger.error("Error during regex extraction: %s", e, exc_info=True)
             return {}
 
-    def _validate_against_schema(self, section: str, field: str, value: Any) -> Tuple[bool, str]:
+    def _validate_against_schema(
+        self, section: str, field: str, value: Any
+    ) -> Tuple[bool, str]:
         """Enhanced validation logic for schema fields."""
         try:
             if value is None or (isinstance(value, list) and not value):
                 return False, f"Missing required field: {section} - {field}"
-                
+
             if isinstance(value, list):
                 value = value[0]
-                
+
             if field.endswith("Email"):
-                email_pattern = r"^[\w\.-]+@[\w\.-]+\.\w+$"
-                if not re.match(email_pattern, str(value)):
+                if not re.match(EMAIL_PATTERN, str(value)):
                     return False, f"Invalid email format: {section} - {field}"
-                    
+
             if "Phone" in field or "Contact" in field:
                 try:
                     parsed_number = phonenumbers.parse(str(value), "US")
@@ -1139,86 +1278,108 @@ class EnhancedParser(BaseParser):
                         return False, f"Invalid phone number: {section} - {field}"
                 except phonenumbers.NumberParseException:
                     return False, f"Invalid phone number format: {section} - {field}"
-                    
+
             if field.endswith("Date") or "Loss/Occurrence" in field:
                 try:
                     dateutil.parser.parse(str(value))
                 except ValueError:
                     return False, f"Invalid date format: {section} - {field}"
-                    
+
             if field in ["Wind", "Structural", "Hail", "Foundation"]:
                 if not isinstance(value, bool):
-                    return False, f"Invalid checkbox value for {section} - {field}: must be boolean"
-                    
+                    return (
+                        False,
+                        f"Invalid checkbox value for {section} - {field}: must be boolean",
+                    )
+
             if field == "Other" and isinstance(value, dict):
                 if not all(k in value for k in ["Checked", "Details"]):
-                    return False, f"Invalid format for Other checkbox: must include Checked and Details"
-                    
-            if field in ["Residence Occupied During Loss", "Was Someone home at time of damage"]:
+                    return (
+                        False,
+                        "Invalid format for Other checkbox: must include Checked and Details",
+                    )
+
+            if field in [
+                RESIDENCE_OCCUPIED,
+                SOMEONE_HOME,
+            ]:
                 if not isinstance(value, bool):
-                    return False, f"Invalid Yes/No value for {section} - {field}: must be boolean"
-                    
+                    return (
+                        False,
+                        f"Invalid Yes/No value for {section} - {field}: must be boolean",
+                    )
+
             # Policy number format validation
-            if field == "Policy #":
-                if not re.match(r"^[A-Z0-9\-]+$", str(value)):
+            if field == POLICY_NUMBER:
+                if not re.match(POLICY_NUMBER_PATTERN, str(value)):
                     return False, f"Invalid policy number format: {section} - {field}"
-                    
+
             # Carrier claim number validation
-            if field == "Carrier Claim Number":
-                if not re.match(r"^[A-Z0-9\-]+$", str(value)):
+            if field == CARRIER_CLAIM_NUMBER:
+                if not re.match(CLAIM_NUMBER_PATTERN, str(value)):
                     return False, f"Invalid claim number format: {section} - {field}"
-                    
+
             # Required non-empty string fields
             required_text_fields = [
-                "Insurance Company", "Handler", "Name", "Loss Address", 
-                "Adjuster Name", "Job Title", "Cause of loss", "Loss Description"
+                "Insurance Company",
+                "Handler",
+                "Name",
+                LOSS_ADDRESS,
+                "Adjuster Name",
+                JOB_TITLE,
+                CAUSE_OF_LOSS,
+                LOSS_DESCRIPTION,
             ]
             if field in required_text_fields and not str(value).strip():
                 return False, f"Required field cannot be empty: {section} - {field}"
-            
+
             return True, ""
-                
-        except Exception as e:
-            self.logger.error(f"Validation error for {section} - {field}: {str(e)}")
+
+        except (OSError, ValueError) as e:
+            self.logger.error(
+                "Validation error for %s - %s: %s", section, field, str(e)
+            )
             return False, f"Validation error: {str(e)}"
 
     def _clean_text(self, text: str) -> str:
         """Clean and standardize text content."""
         if not isinstance(text, str):
             return text
-        
+
         # Remove extra whitespace
         text = " ".join(text.split())
         # Remove common email artifacts
-        text = re.sub(r'_{2,}', '', text)
-        text = re.sub(r'\[cid:[^\]]+\]', '', text)
+        text = re.sub(r"_{2,}", "", text)
+        text = re.sub(r"\[cid:[^\]]+\]", "", text)
         # Standardize line endings
-        text = text.replace('\r\n', '\n').replace('\r', '\n')
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
         # Remove duplicate punctuation
-        text = re.sub(r'([.!?])\1+', r'\1', text)
+        text = re.sub(r"([.!?])\1+", r"\1", text)
         # Standardize quotes
         text = text.replace('"', '"').replace('"', '"')
-        
+
         return text.strip()
 
     def _format_address(self, address: str) -> str:
         """Standardize address format."""
         if not isinstance(address, str):
             return address
-        
+
         # Remove extra spaces and standardize commas
-        address = re.sub(r'\s+', ' ', address.strip())
-        address = re.sub(r'\s*,\s*', ', ', address)
-        
+        address = re.sub(r"\s+", " ", address.strip())
+        address = re.sub(r"\s*,\s*", ", ", address)
+
         # Try to identify and standardize state abbreviations
-        state_pattern = r'\b([A-Za-z]{2})\b\s*(\d{5}(?:-\d{4})?)?$'
+        state_pattern = r"\b([A-Za-z]{2})\b\s*(\d{5}(?:-\d{4})?)?$"
         match = re.search(state_pattern, address)
         if match:
             state = match.group(1)
             # Convert to uppercase state abbreviation if valid
             if len(state) == 2:
-                address = address[:match.start(1)] + state.upper() + address[match.end(1):]
-        
+                address = (
+                    address[: match.start(1)] + state.upper() + address[match.end(1) :]
+                )
+
         return address
 
     def validation_parsing(self, email_content: str, parsed_data: Dict[str, Any]):
@@ -1235,30 +1396,30 @@ class EnhancedParser(BaseParser):
                                 f"Inconsistency in {section} - {field}: '{value}' not found in email content"
                             )
             required_fields = [
-                ("Requesting Party", "Insurance Company"),
-                ("Requesting Party", "Handler"),
-                ("Requesting Party", "Carrier Claim Number"),
-                ("Insured Information", "Name"),
-                ("Insured Information", "Contact #"),
-                ("Insured Information", "Loss Address"),
-                ("Insured Information", "Public Adjuster"),
+                (REQUESTING_PARTY, "Insurance Company"),
+                (REQUESTING_PARTY, "Handler"),
+                (REQUESTING_PARTY, CARRIER_CLAIM_NUMBER),
+                (INSURED_INFO, NAME),
+                (INSURED_INFO, CONTACT_NUMBER),
+                (INSURED_INFO, LOSS_ADDRESS),
+                (INSURED_INFO, PUBLIC_ADJUSTER),
                 (
-                    "Insured Information",
-                    "Is the insured an Owner or a Tenant of the loss location?",
+                    INSURED_INFO,
+                    OWNER_TENANT,
                 ),
-                ("Adjuster Information", "Adjuster Name"),
-                ("Adjuster Information", "Adjuster Phone Number"),
-                ("Adjuster Information", "Adjuster Email"),
-                ("Adjuster Information", "Job Title"),
-                ("Adjuster Information", "Policy #"),
-                ("Assignment Information", "Date of Loss/Occurrence"),
-                ("Assignment Information", "Cause of loss"),
-                ("Assignment Information", "Loss Description"),
-                ("Assignment Information", "Residence Occupied During Loss"),
-                ("Assignment Information", "Was Someone home at time of damage"),
-                ("Assignment Information", "Repair or Mitigation Progress"),
-                ("Assignment Information", "Type"),
-                ("Assignment Information", "Inspection type"),
+                (ADJUSTER_INFO, "Adjuster Name"),
+                (ADJUSTER_INFO, ADJUSTER_PHONE_NUMBER),
+                (ADJUSTER_INFO, ADJUSTER_EMAIL),
+                (ADJUSTER_INFO, JOB_TITLE),
+                (ADJUSTER_INFO, POLICY_NUMBER),
+                (ASSIGNMENT_INFO, DATE_OF_LOSS),
+                (ASSIGNMENT_INFO, CAUSE_OF_LOSS),
+                (ASSIGNMENT_INFO, LOSS_DESCRIPTION),
+                (ASSIGNMENT_INFO, RESIDENCE_OCCUPIED),
+                (ASSIGNMENT_INFO, SOMEONE_HOME),
+                (ASSIGNMENT_INFO, REPAIR_PROGRESS),
+                (ASSIGNMENT_INFO, "Type"),
+                (ASSIGNMENT_INFO, INSPECTION_TYPE),
             ]
             for section, field in required_fields:
                 if not parsed_data.get(section, {}).get(field):
@@ -1266,11 +1427,13 @@ class EnhancedParser(BaseParser):
                         f"Missing required field: {section} - {field}"
                     )
             if inconsistencies:
-                parsed_data["validation_issues"] = inconsistencies
+                parsed_data["validation_issues"] = parsed_data.get(
+                    "validation_issues", []
+                ) + inconsistencies
                 self.logger.warning("Validation issues found: %s", inconsistencies)
             else:
                 self.logger.info("Validation parsing completed successfully.")
-        except Exception as e:
+        except (OSError, ValueError) as e:
             self.logger.error("Error during validation parsing: %s", e, exc_info=True)
 
     def format_phone_number(self, phone: str) -> str:
@@ -1312,7 +1475,7 @@ class EnhancedParser(BaseParser):
                 return True
             self.logger.warning("Discrepancy in attachments detected.")
             return False
-        except Exception as e:
+        except (OSError, ValueError) as e:
             self.logger.error(
                 "Error during attachment verification: %s", e, exc_info=True
             )
@@ -1340,7 +1503,9 @@ class EnhancedParser(BaseParser):
                 "regex_extraction": self.timeouts.get("regex_extraction", 30),
                 "ner_parsing": self.timeouts.get("ner_parsing", 30),
                 "donut_parsing": self.timeouts.get("donut_parsing", 60),
-                "sequence_model_parsing": self.timeouts.get("sequence_model_parsing", 45),
+                "sequence_model_parsing": self.timeouts.get(
+                    "sequence_model_parsing", 45
+                ),
                 "validation_parsing": self.timeouts.get("validation_parsing", 30),
                 "schema_validation": self.timeouts.get("schema_validation", 30),
                 "post_processing": self.timeouts.get("post_processing", 30),

@@ -2,7 +2,7 @@
 
 from src.parsers.enhanced_parser import EnhancedParser
 from src.parsers.parser_options import ParserOption
-from typing import Dict, Optional
+from typing import Dict
 
 class ParserRegistry:
     _parsers = {}
@@ -19,7 +19,7 @@ class ParserRegistry:
         cls._parsers[option] = parser_class
 
     @classmethod
-    def get_parser(cls, option: ParserOption, socketio, sid) -> EnhancedParser:
+    def get_parser(cls, option: ParserOption, socketio=None, sid=None) -> EnhancedParser:
         """
         Instantiate and retrieve a parser instance for a given option.
 
@@ -37,7 +37,7 @@ class ParserRegistry:
         parser_class = cls._parsers.get(option)
         if not parser_class:
             raise ValueError(f"No parser registered for option: {option}")
-        return parser_class(socketio, sid)
+        return parser_class(socketio=socketio, sid=sid)
 
     @classmethod
     def health_check(cls) -> Dict[str, bool]:

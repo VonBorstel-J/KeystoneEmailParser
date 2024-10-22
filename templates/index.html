@@ -221,7 +221,7 @@
                   type="submit"
                   class="btn--primary w-100"
                   aria-label="Parse Email"
-                  id="submitButton" <!-- Added ID for JavaScript -->
+                  id="submitButton"
                 >
                   Parse Email
                 </button>
@@ -344,7 +344,7 @@
                 role="alert"
                 aria-live="assertive"
               >
-                Parsed data copied to clipboard!
+                <!-- Success content will be injected here -->
               </div>
 
               <!-- Download Buttons -->
@@ -500,17 +500,16 @@
       crossorigin="anonymous"
     ></script>
 
-    <!-- Web socket live parsing -->
-    <script
-      src="https://cdn.socket.io/4.5.4/socket.io.min.js"
-      integrity="sha384-XgLQax4uUXAF/vKMSwPhK/rc5J6cJ89kZx65dPFdTjCcHt+XKdOTTAd9C1cZbdvI"
-      crossorigin="anonymous"
-    ></script>
+<!-- Socket.IO for Real-time Communication -->
+<script
+  src="https://cdn.socket.io/4.5.4/socket.io.min.js"
+  crossorigin="anonymous"
+></script>
 
-    <!-- Custom Scripts -->
-    <script
-      src="{{ url_for('static', filename='js/scripts.js') }}"
-      defer
-    ></script>
+<!-- Custom Scripts -->
+<script
+  src="{{ url_for('static', filename='js/scripts.js') }}"
+  defer
+></script>
   </body>
 </html>
