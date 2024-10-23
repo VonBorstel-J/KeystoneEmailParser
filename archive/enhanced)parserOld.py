@@ -1,5 +1,6 @@
 # src/parsers/enhanced_parser.py
 
+# Standard library imports
 import logging
 import os
 import re
@@ -8,19 +9,25 @@ from concurrent.futures import (
     ThreadPoolExecutor,
     TimeoutError as ConcurrentTimeoutError,
 )
-from typing import Any, Dict, List, Optional, Union, Set
+from typing import Any, Dict, List, Optional, Union
 
-import dateutil.parser
-import phonenumbers
+# Third-party imports
 import torch
 from huggingface_hub import login
 from PIL import Image
 from thefuzz import fuzz
 from transformers import DonutProcessor, VisionEncoderDecoderModel, pipeline
-from dataclasses import dataclass
-from copy import deepcopy
 
+# Local imports
 from src.parsers.base_parser import BaseParser
+from src.parsers.data_merger import DataMerger, MergeChange
+from src.parsers.parser_helpers import (
+    format_date,
+    format_phone_number,
+    clean_text,
+    format_address,
+)
+from src.parsers.stages.post_processing import post_process_parsed_data
 from src.utils.config_loader import ConfigLoader
 from src.utils.quickbase_schema import QUICKBASE_SCHEMA
 from src.utils.validation import validate_json, assignment_schema
@@ -226,8 +233,8 @@ class EnhancedParser(BaseParser):
                 hasattr(self, "donut_model") and self.donut_model is not None,
                 hasattr(self, "validation_pipeline")
                 and self.validation_pipeline is not None,
-                hasattr(self, "sentiment_pipeline")
-                and self.sentiment_pipeline is not None,
+                hasattr(self, "summarization_pipeline")
+                and self.summarization_pipeline is not None,
             ]
         )
         if not components_healthy:
@@ -265,8 +272,8 @@ class EnhancedParser(BaseParser):
             "json_validation": self.config.get("model_timeouts", {}).get(
                 "json_validation", 30
             ),
-            "sentiment_analysis": self.config.get("model_timeouts", {}).get(
-                "sentiment_analysis", 30
+            "summarization": self.config.get("model_timeouts", {}).get(
+                "summarization", 45
             ),
         }
         self.logger.debug("Set processing timeouts: %s", timeouts)
@@ -346,7 +353,7 @@ class EnhancedParser(BaseParser):
                 "Text Summarization",
                 self._stage_text_summarization,
                 {"email_content": email_content, "parsed_data": parsed_data},
-            ),  
+            ),
             (
                 "Post Processing",
                 self._stage_post_processing,
@@ -850,32 +857,6 @@ class EnhancedParser(BaseParser):
                 "validation_issues", []
             ) + [str(e)]
 
-    def _stage_sentiment_analysis_internal(
-        self, email_content: str, parsed_data: Dict[str, Any]
-    ):
-        try:
-            self.logger.debug("Starting Sentiment Analysis pipeline.")
-            if self.sentiment_pipeline is None:
-                self.logger.warning(
-                    "Sentiment Analysis pipeline is not available. Skipping Sentiment Analysis."
-                )
-                return
-            sentiment = self.sentiment_pipeline(email_content)
-            if sentiment:
-                sentiment_score = sentiment[0].get("score", 0)
-                sentiment_label = sentiment[0].get("label", "Neutral")
-                parsed_data["sentiment"] = {
-                    "label": sentiment_label,
-                    "score": sentiment_score,
-                }
-                self.logger.debug(
-                    "Sentiment Analysis Result: %s", parsed_data["sentiment"]
-                )
-        except Exception as e:
-            self.logger.error(
-                "Error during Sentiment Analysis inference: %s", e, exc_info=True
-            )
-
     def validate_with_bart(
         self, parsed_data: Dict[str, Any], original_email: str
     ) -> Dict[str, Any]:
@@ -1313,136 +1294,6 @@ Provide your suggestions within the following JSON structure, enclosed between <
             self.logger.error(f"Error during data validation: {str(e)}", exc_info=True)
             raise ValueError(f"Data validation failed: {str(e)}")
 
-    def merge_parsed_data(
-        self, original_data: Dict[str, Any], new_data: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        merger = DataMerger(self.logger)
-        try:
-            if not isinstance(original_data, dict):
-                raise ValueError(
-                    f"original_data must be dict, got {type(original_data)}"
-                )
-            if not isinstance(new_data, dict):
-                raise ValueError(f"new_data must be dict, got {type(new_data)}")
-            result = deepcopy(original_data)
-            for section, fields in new_data.items():
-                try:
-                    schema_config = QUICKBASE_SCHEMA.get(section, {})
-                    if section in QUICKBASE_SCHEMA:
-                        if section not in result:
-                            result[section] = {}
-                            merger.changes.append(
-                                MergeChange(
-                                    section=section,
-                                    field=None,
-                                    old_value=None,
-                                    new_value={},
-                                    change_type="create",
-                                )
-                            )
-                        if isinstance(fields, dict):
-                            for field, value in fields.items():
-                                field_config = schema_config.get(field, {})
-                                old_value = result[section].get(field, ["N/A"])
-                                new_value = merger.merge_field_values(
-                                    old_value, value, field_config
-                                )
-                                if old_value != new_value:
-                                    result[section][field] = new_value
-                                    merger.changes.append(
-                                        MergeChange(
-                                            section=section,
-                                            field=field,
-                                            old_value=old_value,
-                                            new_value=new_value,
-                                            change_type="update",
-                                        )
-                                    )
-                        elif isinstance(fields, list):
-                            old_value = result.get(section, [])
-                            new_value = merger.merge_field_values(old_value, fields)
-                            if old_value != new_value:
-                                result[section] = new_value
-                                merger.changes.append(
-                                    MergeChange(
-                                        section=section,
-                                        field=None,
-                                        old_value=old_value,
-                                        new_value=new_value,
-                                        change_type="update",
-                                    )
-                                )
-                        else:
-                            old_value = result.get(section)
-                            result[section] = fields
-                            merger.changes.append(
-                                MergeChange(
-                                    section=section,
-                                    field=None,
-                                    old_value=old_value,
-                                    new_value=fields,
-                                    change_type="update",
-                                )
-                            )
-                    else:
-                        self.logger.debug(f"Handling non-schema section: {section}")
-                        if isinstance(fields, list):
-                            if section not in result:
-                                result[section] = []
-                                merger.changes.append(
-                                    MergeChange(
-                                        section=section,
-                                        field=None,
-                                        old_value=None,
-                                        new_value=[],
-                                        change_type="create",
-                                    )
-                                )
-                            old_value = result[section]
-                            new_items = [x for x in fields if x not in result[section]]
-                            result[section].extend(new_items)
-                            if new_items:
-                                merger.changes.append(
-                                    MergeChange(
-                                        section=section,
-                                        field=None,
-                                        old_value=old_value,
-                                        new_value=result[section],
-                                        change_type="update",
-                                    )
-                                )
-                        else:
-                            old_value = result.get(section)
-                            result[section] = fields
-                            merger.changes.append(
-                                MergeChange(
-                                    section=section,
-                                    field=None,
-                                    old_value=old_value,
-                                    new_value=fields,
-                                    change_type="update",
-                                )
-                            )
-                except Exception as section_error:
-                    self.logger.error(
-                        f"Error processing section '{section}': {str(section_error)}",
-                        exc_info=True,
-                    )
-                    continue
-            if merger.changes:
-                self.logger.debug(
-                    "Merge changes:\n"
-                    + "\n".join(f"- {change}" for change in merger.changes)
-                )
-            self._validate_merged_data(result)
-            return result
-        except ValueError as ve:
-            self.logger.error(f"Invalid input data: {str(ve)}")
-            raise
-        except Exception as e:
-            self.logger.error(f"Error in merge_parsed_data: {str(e)}", exc_info=True)
-            return original_data
-
     def _validate_merged_data(self, data: Dict[str, Any]) -> None:
         required_sections = {
             "Requesting Party": {
@@ -1528,136 +1379,6 @@ Provide your suggestions within the following JSON structure, enclosed between <
         except Exception as e:
             self.logger.error(f"Error during data validation: {str(e)}", exc_info=True)
             raise ValueError(f"Data validation failed: {str(e)}")
-
-    def merge_parsed_data(
-        self, original_data: Dict[str, Any], new_data: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        merger = DataMerger(self.logger)
-        try:
-            if not isinstance(original_data, dict):
-                raise ValueError(
-                    f"original_data must be dict, got {type(original_data)}"
-                )
-            if not isinstance(new_data, dict):
-                raise ValueError(f"new_data must be dict, got {type(new_data)}")
-            result = deepcopy(original_data)
-            for section, fields in new_data.items():
-                try:
-                    schema_config = QUICKBASE_SCHEMA.get(section, {})
-                    if section in QUICKBASE_SCHEMA:
-                        if section not in result:
-                            result[section] = {}
-                            merger.changes.append(
-                                MergeChange(
-                                    section=section,
-                                    field=None,
-                                    old_value=None,
-                                    new_value={},
-                                    change_type="create",
-                                )
-                            )
-                        if isinstance(fields, dict):
-                            for field, value in fields.items():
-                                field_config = schema_config.get(field, {})
-                                old_value = result[section].get(field, ["N/A"])
-                                new_value = merger.merge_field_values(
-                                    old_value, value, field_config
-                                )
-                                if old_value != new_value:
-                                    result[section][field] = new_value
-                                    merger.changes.append(
-                                        MergeChange(
-                                            section=section,
-                                            field=field,
-                                            old_value=old_value,
-                                            new_value=new_value,
-                                            change_type="update",
-                                        )
-                                    )
-                        elif isinstance(fields, list):
-                            old_value = result.get(section, [])
-                            new_value = merger.merge_field_values(old_value, fields)
-                            if old_value != new_value:
-                                result[section] = new_value
-                                merger.changes.append(
-                                    MergeChange(
-                                        section=section,
-                                        field=None,
-                                        old_value=old_value,
-                                        new_value=new_value,
-                                        change_type="update",
-                                    )
-                                )
-                        else:
-                            old_value = result.get(section)
-                            result[section] = fields
-                            merger.changes.append(
-                                MergeChange(
-                                    section=section,
-                                    field=None,
-                                    old_value=old_value,
-                                    new_value=fields,
-                                    change_type="update",
-                                )
-                            )
-                    else:
-                        self.logger.debug(f"Handling non-schema section: {section}")
-                        if isinstance(fields, list):
-                            if section not in result:
-                                result[section] = []
-                                merger.changes.append(
-                                    MergeChange(
-                                        section=section,
-                                        field=None,
-                                        old_value=None,
-                                        new_value=[],
-                                        change_type="create",
-                                    )
-                                )
-                            old_value = result[section]
-                            new_items = [x for x in fields if x not in result[section]]
-                            result[section].extend(new_items)
-                            if new_items:
-                                merger.changes.append(
-                                    MergeChange(
-                                        section=section,
-                                        field=None,
-                                        old_value=old_value,
-                                        new_value=result[section],
-                                        change_type="update",
-                                    )
-                                )
-                        else:
-                            old_value = result.get(section)
-                            result[section] = fields
-                            merger.changes.append(
-                                MergeChange(
-                                    section=section,
-                                    field=None,
-                                    old_value=old_value,
-                                    new_value=fields,
-                                    change_type="update",
-                                )
-                            )
-                except Exception as section_error:
-                    self.logger.error(
-                        f"Error processing section '{section}': {str(section_error)}",
-                        exc_info=True,
-                    )
-                    continue
-            if merger.changes:
-                self.logger.debug(
-                    "Merge changes:\n"
-                    + "\n".join(f"- {change}" for change in merger.changes)
-                )
-            self._validate_merged_data(result)
-            return result
-        except ValueError as ve:
-            self.logger.error(f"Invalid input data: {str(ve)}")
-            raise
-        except Exception as e:
-            self.logger.error(f"Error in merge_parsed_data: {str(e)}", exc_info=True)
-            return original_data
 
     def validate_input(
         self,
@@ -1865,47 +1586,76 @@ Provide your suggestions within the following JSON structure, enclosed between <
     def cleanup_resources(self):
         self.logger.info("Cleaning up resources.")
         try:
-            if hasattr(self, "donut_model") and self.donut_model is not None:
-                self.donut_model.cpu()
-                self.logger.debug("Donut model moved to CPU.")
-            if hasattr(self, "ner_pipeline") and self.ner_pipeline is not None:
-                if hasattr(self.ner_pipeline, "model"):
-                    self.ner_pipeline.model.cpu()
-                    self.logger.debug("NER pipeline model moved to CPU.")
-            if (
-                hasattr(self, "validation_pipeline")
-                and self.validation_pipeline is not None
-            ):
-                if hasattr(self.validation_pipeline, "model"):
-                    self.validation_pipeline.model.cpu()
-                    self.logger.debug("Validation pipeline model moved to CPU.")
-            if (
-                hasattr(self, "sentiment_pipeline")
-                and self.sentiment_pipeline is not None
-            ):
-                if hasattr(self.sentiment_pipeline, "model"):
-                    self.sentiment_pipeline.model.cpu()
-                    self.logger.debug("Sentiment Analysis pipeline model moved to CPU.")
-        except AttributeError as ae:
-            self.logger.error(f"Attribute error during cleanup: {ae}", exc_info=True)
+            # Create a list of models to cleanup
+            models_to_cleanup = [
+                (self.donut_model, "Donut model"),
+                (self.ner_pipeline, "NER pipeline"),
+                (self.validation_pipeline, "Validation pipeline"),
+                (self.summarization_pipeline, "Summarization pipeline"),
+            ]
+
+            for model, name in models_to_cleanup:
+                if hasattr(self, model.__name__) and model is not None:
+                    if hasattr(model, "model"):
+                        model.model.cpu()
+                    elif hasattr(model, "to"):
+                        model.cpu()
+                    self.logger.debug(f"{name} moved to CPU.")
+
+            torch.cuda.empty_cache()
+            self.logger.info("Resources cleaned up successfully.")
         except Exception as e:
-            self.logger.error(f"Unexpected error during cleanup: {e}", exc_info=True)
-        torch.cuda.empty_cache()
-        self.logger.info("Resources cleaned up successfully.")
+            self.logger.error(f"Error during cleanup: {e}", exc_info=True)
+
 
     def recover_from_failure(self, stage: str) -> bool:
+        """
+        Attempts to recover from a stage failure by reinitializing the corresponding model.
+    
+        Args:
+            stage (str): The name of the failed stage
+    
+        Returns:
+            bool: True if recovery was successful, False otherwise
+        """
         self.logger.warning("Attempting to recover from %s failure", stage)
-        if stage.lower().replace(" ", "_") in [
-            "ner_parsing",
-            "donut_parsing",
-            "validation_parsing",
-            "schema_validation",
-            "post_processing",
-            "json_validation",
-            "sentiment_analysis",
-        ]:
-            return self._reinitialize_models()
-        return False
+    
+        # Map stages to their initialization methods
+        recoverable_stages = {
+            "ner_parsing": self.init_ner,
+            "donut_parsing": self.init_donut,
+            "validation_parsing": self.init_validation_model,
+            "schema_validation": self.init_validation_model,
+            "summarization": self.init_summarization_model,
+            # Post processing and JSON validation don't need model recovery
+            "post_processing": None,
+            "json_validation": None,
+        }
+    
+        # Convert stage name to standardized key
+        stage_key = stage.lower().replace(" ", "_")
+    
+        # Check if stage is recoverable and has an initialization method
+        if stage_key in recoverable_stages and recoverable_stages[stage_key]:
+            try:
+                # Attempt to reinitialize the corresponding model
+                recoverable_stages[stage_key]()
+    
+                # Verify recovery was successful
+                recovery_successful = self.health_check()
+                if recovery_successful:
+                    self.logger.info(f"Successfully recovered from {stage} failure")
+                else:
+                    self.logger.warning(f"Recovery from {stage} failure was unsuccessful")
+                return recovery_successful
+    
+            except Exception as e:
+                self.logger.error(f"Recovery failed for {stage}: {e}", exc_info=True)
+                return False
+
+    # Stage is not recoverable
+    self.logger.debug(f"No recovery method available for stage: {stage}")
+    return False
 
     def _reinitialize_models(self) -> bool:
         try:
@@ -1914,7 +1664,6 @@ Provide your suggestions within the following JSON structure, enclosed between <
             self.init_ner()
             self.init_donut()
             self.init_validation_model()
-            self.init_sentiment_model()
             health = self.health_check()
             if health:
                 self.logger.info("Reinitialization successful.")
@@ -1940,10 +1689,6 @@ Provide your suggestions within the following JSON structure, enclosed between <
         if self.validation_pipeline is None:
             self.init_validation_model()
 
-    def _lazy_load_sentiment_model(self):
-        if self.sentiment_pipeline is None:
-            self.init_sentiment_model()
-
     def __enter__(self):
         return self
 
@@ -1961,7 +1706,7 @@ Provide your suggestions within the following JSON structure, enclosed between <
                 "schema_validation": self.timeouts.get("schema_validation", 30),
                 "post_processing": self.timeouts.get("post_processing", 30),
                 "json_validation": self.timeouts.get("json_validation", 30),
-                "sentiment_analysis": self.timeouts.get("sentiment_analysis", 30),
+                "summarization": self.timeouts.get("summarization", 45),
             },
         }
 
@@ -1974,19 +1719,3 @@ Provide your suggestions within the following JSON structure, enclosed between <
                 "max_allocated": torch.cuda.max_memory_allocated() / 1024**2,
             }
         return memory_info
-
-    # Additional utility methods can be defined below as needed
-
-
-# Example Usage After Fixes
-if __name__ == "__main__":
-    parser = EnhancedParser()
-    try:
-        result = parser.parse_email(
-            email_content="example email content", document_image=None
-        )
-        print("Parsed Result:", result)
-    except Exception as e:
-        print("Error during parsing:", e)
-    finally:
-        parser.cleanup_resources()

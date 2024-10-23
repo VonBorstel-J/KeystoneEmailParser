@@ -1,25 +1,140 @@
 # config/parser_config.yaml
 
+# Directory where models will be cached
+cache_dir: ".cache"
+
+# Authentication settings
+authentication:
+  hf_token_env_var: "HF_TOKEN"  # Environment variable name for Hugging Face token
+
+# Model Configurations
 models:
   ner:
-    name: "dslim/bert-base-NER"
-    type: "ner"
-    timeout: 30
-  donut:
-    name: "naver-clova-ix/donut-base-finetuned-cord-v2"
-    type: "document"
-    timeout: 60
-  sequence:
-    name: "facebook/bart-large-cnn"
-    type: "summarization"
-    timeout: 45
-  validation:
-    name: "gpt2"
-    type: "text-generation"
-    timeout: 30
+    repo_id: "dslim/bert-base-NER"          # Hugging Face repository ID for NER model
+    task: "ner"                             # Task type
+    timeout: 30                             # Timeout in seconds
+    aggregation_strategy: "simple"         # Specific to NER pipeline
 
+  donut:
+    device: "cuda"
+    processor: "naver-clova-ix/donut-base-finetuned-cord-v2"
+    model: "naver-clova-ix/donut-base-finetuned-cord-v2"
+    repo_id: "naver-clova-ix/donut-base-finetuned-cord-v2"  # Repository ID for Donut model
+    task: "document"                       # Task type (custom if needed)
+    timeout: 60                             # Timeout in seconds
+
+  validation:
+    repo_id: "facebook/bart-large"          # Repository ID for Validation model
+    task: "text2text-generation"            # Task type
+    timeout: 30                             # Timeout in seconds
+
+  summarization:
+    repo_id: "facebook/bart-large-cnn"      # Repository ID for Summarization model
+    task: "summarization"                   # Task type
+    timeout: 45                             # Timeout in seconds
+
+# Processing Configuration
 processing:
-  batch_size: 1
-  max_length: 512
-  device: "auto"
-  fallback_to_cpu: true
+  batch_size: 1                            # Number of samples processed at once
+  max_length: 5126                          # Maximum length for processing
+  device: "auto"                           # Device selection ('auto', 'cuda', 'cpu')
+  fallback_to_cpu: true                    # Whether to fallback to CPU if GPU not available
+
+# Additional Configurations
+fuzzy_threshold: 90
+
+known_values:
+  Claim Number:
+    - "ABC123"
+    - "XYZ789"
+    - "DEF456"
+    - "GHI101"
+    - "JKL202"
+    # Add more known claim numbers as needed
+  Insurance Company:
+    - "State Farm"
+    - "Allstate"
+    - "Geico"
+    - "Progressive"
+    - "Nationwide"
+    - "Liberty Mutual"
+    - "Farmers"
+    - "Travelers"
+    - "American Family"
+    - "USAA"
+    # Add more known insurance companies as needed
+  Handler:
+    - "John Doe"
+    - "Jane Smith"
+    - "Emily Davis"
+    - "Michael Brown"
+    - "Sarah Johnson"
+    - "David Wilson"
+    # Add more known handlers as needed
+  Adjuster Name:
+    - "Michael Brown"
+    - "Sarah Johnson"
+    - "David Wilson"
+    - "Laura Martinez"
+    - "James Anderson"
+    # Add more known adjuster names as needed
+  # Add other fields and their known values as needed
+
+date_formats:
+  - '%m/%d/%Y'
+  - '%d/%m/%Y'
+  - '%Y-%m-%d'
+  - '%B %d, %Y'
+  - '%b %d, %Y'
+  - '%d %B %Y'
+  - '%d %b %Y'
+  - '%Y/%m/%d'
+  - '%d-%m-%Y'
+  - '%Y.%m.%d'
+  - '%d.%m.%Y'
+  - '%m-%d-%Y'
+  - '%Y%m%d'
+  - '%B %-d, %Y'
+  - '%b %-d, %Y'
+  - '%Y-%m-%dT%H:%M:%S'
+  - '%Y-%m-%dT%H:%M:%S.%fZ'
+
+boolean_values:
+  positive:
+    - 'yes'
+    - 'y'
+    - 'true'
+    - 't'
+    - '1'
+    - 'x'
+    - '[x]'
+    - '[X]'
+    - '(x)'
+    - '(X)'
+  negative:
+    - 'no'
+    - 'n'
+    - 'false'
+    - 'f'
+    - '0'
+    - '[ ]'
+    - '()'
+    - '[N/A]'
+    - '(N/A)'
+
+valid_extensions:
+  - '.pdf'
+  - '.docx'
+  - '.xlsx'
+  - '.zip'
+  - '.png'
+  - '.jpg'
+  - '.jpeg'
+  - '.gif'
+  - '.txt'
+  - '.csv'
+
+url_validation:
+  use_external_library: true
+
+log_level: "DEBUG"

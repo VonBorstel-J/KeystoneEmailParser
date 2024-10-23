@@ -15,6 +15,8 @@ from PIL import Image
 
 from src.parsers.parser_options import ParserOption
 from src.parsers.parser_registry import ParserRegistry
+from src.utils.config_loader import ConfigLoader
+from src.utils.config import Config
 
 # Load environment variables from .env file
 load_dotenv()
@@ -27,7 +29,7 @@ json_handler = logging.StreamHandler()
 json_handler.setFormatter(formatter)
 logger = logging.getLogger()
 logger.addHandler(json_handler)
-logger.setLevel(logging.DEBUG)
+logger.setLevel(Config.get_log_level())
 
 socketio = SocketIO(app, cors_allowed_origins="*")
 
@@ -54,8 +56,8 @@ def background_parse(sid, parser, email_content, document_image):
 
             socketio.emit('parsing_started', {'message': 'Parsing started...'}, room=sid)
 
-            # Progress updates (These can be tied to actual parsing stages if desired)
-            steps = [
+            # Progress updates tied to actual parsing stages
+            stages = [
                 {'stage': 'Initializing parser', 'progress': 10},
                 {'stage': 'Processing email content', 'progress': 30},
                 {'stage': 'Extracting entities', 'progress': 50},
@@ -63,7 +65,7 @@ def background_parse(sid, parser, email_content, document_image):
                 {'stage': 'Completed', 'progress': 100},
             ]
 
-            for step in steps:
+            for step in stages:
                 socketio.emit('parsing_progress', {'stage': step['stage'], 'progress': step['progress']}, room=sid)
                 socketio.sleep(1)  # Use socketio.sleep instead of time.sleep
 
@@ -144,7 +146,6 @@ def parse_email_route():
     # Start parsing in background
     socketio.start_background_task(background_parse, sid, parser, email_content, document_image)
 
-
     return jsonify({"message": "Parsing started"}), 202
 
 
@@ -189,10 +190,13 @@ def page_not_found(e):
 
 if __name__ == "__main__":
     try:
+        # Load configuration
+        config = Config.load()
+
         host = os.getenv("HOST", "127.0.0.1")
         port = int(os.getenv("PORT", "5000"))
 
-        static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+        static_dir = os.path.join(app.root_path, "static")
         if not os.path.exists(static_dir):
             os.makedirs(static_dir)
             logger.info("Created 'static' directory at %s", static_dir)
