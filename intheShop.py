@@ -1,1357 +1,1916 @@
-import re
-import yaml
-import spacy
+# src/parsers/enhanced_parser.py
+
 import logging
 import os
+import re
 import json
-import csv
-import io
-import threading
-import datetime
-import time
-from typing import Dict, Any, List, Tuple, Optional
-from email import policy
-from email.parser import Parser as EmailParser
-from transformers import pipeline, AutoTokenizer, AutoModelForTokenClassification
-from thefuzz import fuzz
-from dateutil.parser import parse as dateutil_parse
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as ConcurrentTimeoutError
+from typing import Any, Dict, List, Optional, Union, Set
+
+import dateutil.parser
 import phonenumbers
-from urllib.parse import urlparse
-from functools import lru_cache, wraps
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import torch
+from huggingface_hub import login
+from PIL import Image
+from thefuzz import fuzz
+from transformers import DonutProcessor, VisionEncoderDecoderModel, pipeline
+from dataclasses import dataclass
+from copy import deepcopy
 
 from src.parsers.base_parser import BaseParser
-from src.parsers.rule_based_parser import RuleBasedParser
-from src.utils.validation import validate_json
+from src.utils.config_loader import ConfigLoader
+from src.utils.quickbase_schema import QUICKBASE_SCHEMA
+from src.utils.validation import validate_json, assignment_schema
 
-# Constants for logging messages
-LOG_FOUND = "Found %s: %s"
-LOG_FOUND_ADDITIONAL = "Found %s using additional pattern: %s"
-LOG_NOT_FOUND = "%s not found, set to 'N/A'"
-LOG_UNEXPECTED_PHONE_FORMAT = "Unexpected phone number format: %s"
-LOG_PARSED_DATE = "Parsed date '%s' as '%s' using format '%s'."
-LOG_FAILED_DATE_PARSE = "Unable to parse date: %s"
-LOG_ENTITIES = "Extracted Entities: %s"
-LOG_TRANSFORMER_ENTITIES = "Transformer Extracted Entities: %s"
-LOG_FUZZY_MATCHED = "Fuzzy matched field '%s' to '%s'."
-LOG_APPLIED_RULE = "Applied rule on field '%s'. New value: %s"
-LOG_FAILED_PARSE = "Failed to parse email content: %s"
-LOG_FAILED_LOAD_MODEL = "Failed to load spaCy model: %s"
-LOG_FAILED_TRANSFORMER = "Failed to initialize transformer model: %s"
-LOG_FAILED_EXTRACT_ENTITIES_SPACY = "Failed to extract entities using spaCy: %s"
-LOG_FAILED_EXTRACT_ENTITIES_TRANSFORMER = "Failed to extract entities using Transformer model: %s"
-LOG_SECTION_NOT_FOUND = "Section '%s' not found in email content."
-LOG_FALLBACK = "Falling back to RuleBasedParser for parsing."
-LOG_SECTION_HEADER = "Detected section header: %s"
-LOG_LOADING_CONFIG = "Loaded parser configuration from %s."
-LOG_LOADING_DEFAULT_CONFIG = "Loaded default parser configuration."
-LOG_SPACY_MODEL_LOADED = "spaCy model '%s' loaded successfully."
-LOG_SPACY_MODEL_DOWNLOADED = "Successfully downloaded spaCy model '%s'."
-LOG_SPACY_MODEL_DOWNLOAD_FAILED = "Failed to download spaCy model '%s': %s"
-LOG_EXTRACTING_SECTIONS = "Splitting email content into sections."
-LOG_SECTION_FOUND = "Sections Found: %s"
-LOG_EXTRACTING_REQUESTING_PARTY = "Extracting Requesting Party information."
-LOG_EXTRACTING_INSURED_INFORMATION = "Extracting Insured Information."
-LOG_EXTRACTING_ADJUSTER_INFORMATION = "Extracting Adjuster Information."
-LOG_EXTRACTING_ASSIGNMENT_INFORMATION = "Extracting Assignment Information."
-LOG_EXTRACTING_ADDITIONAL_DETAILS = "Extracting Additional Details/Special Instructions."
-LOG_EXTRACTING_ATTACHMENTS = "Extracting Attachments."
-LOG_FAILED_FUZZY_MATCHING = "Failed during fuzzy matching: %s"
-LOG_FAILED_POST_PROCESSING = "Failed during post-processing rules: %s"
-LOG_VALIDATION_ERROR = "JSON Schema Validation Error: %s"
-LOG_PARSER_SUCCESS = "Successfully parsed email with HybridParser."
-LOG_PARSER_DEBUG = "Extracted Data: %s"
-LOG_MODEL_DOWNLOAD_START = "Starting download of %s model..."
-LOG_MODEL_DOWNLOAD_COMPLETE = "Successfully downloaded %s model."
-LOG_MODEL_DOWNLOAD_FAILED = "Failed to download %s model: %s"
-LOG_STARTUP_CHECK_START = "Starting model availability check..."
-LOG_STARTUP_CHECK_COMPLETE = "All required models are available."
-LOG_STARTUP_CHECK_FAILED = "Some required models are not available: %s"
-LOG_METHOD_EXECUTION = "Executed %s in %.4f seconds"
+# Constants
+LLM_TIMEOUT_SECONDS = 500
+VALIDATION_TIMEOUT_SECONDS = 60  # Added a specific timeout for validation
 
-# Constants for section headers and field names
-SECTION_REQUESTING_PARTY = "Requesting Party"
-SECTION_INSURED_INFORMATION = "Insured Information"
-SECTION_ADJUSTER_INFORMATION = "Adjuster Information"
-SECTION_ASSIGNMENT_INFORMATION = "Assignment Information"
-SECTION_ADDITIONAL_DETAILS = "Additional details/Special Instructions"
-SECTION_ATTACHMENTS = "Attachment(s)"
-
-FIELD_INSURANCE_COMPANY = "Insurance Company"
-FIELD_HANDLER = "Handler"
-FIELD_CARRIER_CLAIM_NUMBER = "Carrier Claim Number"
-FIELD_NAME = "Name"
-FIELD_CONTACT_NUMBER = "Contact #"
-FIELD_LOSS_ADDRESS = "Loss Address"
-FIELD_PUBLIC_ADJUSTER = "Public Adjuster"
-FIELD_OWNER_OR_TENANT = "Owner or Tenant"
-FIELD_ADJUSTER_NAME = "Adjuster Name"
-FIELD_ADJUSTER_PHONE_NUMBER = "Adjuster Phone Number"
-FIELD_ADJUSTER_EMAIL = "Adjuster Email"
-FIELD_JOB_TITLE = "Job Title"
-FIELD_ADDRESS = "Address"
-FIELD_POLICY_NUMBER = "Policy Number"
-FIELD_DATE_OF_LOSS = "Date of Loss/Occurrence"
-FIELD_CAUSE_OF_LOSS = "Cause of Loss"
-FIELD_FACTS_OF_LOSS = "Facts of Loss"
-FIELD_LOSS_DESCRIPTION = "Loss Description"
-FIELD_RESIDENCE_OCCUPIED = "Residence Occupied During Loss"
-FIELD_SOMEONE_HOME = "Was Someone Home at Time of Damage"
-FIELD_REPAIR_PROGRESS = "Repair or Mitigation Progress"
-FIELD_TYPE = "Type"
-FIELD_INSPECTION_TYPE = "Inspection Type"
-FIELD_WIND = "Wind"
-FIELD_STRUCTURAL = "Structural"
-FIELD_HAIL = "Hail"
-FIELD_FOUNDATION = "Foundation"
-FIELD_OTHER = "Other"
-FIELD_ADDITIONAL_DETAILS = "Additional Details/Special Instructions"
-FIELD_ATTACHMENTS = "Attachments"
-
-# Confidence thresholds
-CONFIDENCE_LOW_THRESHOLD = 0.5
-CONFIDENCE_MEDIUM_THRESHOLD = 0.75
-CONFIDENCE_HIGH_THRESHOLD = 0.9
-
-class ParserException(Exception):
-    """Base exception class for parser errors."""
+# Exceptions
+class TimeoutException(Exception):
     pass
 
-class ConfigurationError(ParserException):
-    """Exception raised for configuration errors."""
-    pass
+# Data Classes
+@dataclass
+class MergeChange:
+    section: str
+    field: Optional[str]
+    old_value: Any
+    new_value: Any
+    change_type: str
 
-class ModelLoadingError(ParserException):
-    """Exception raised when models fail to load."""
-    pass
+    def __str__(self) -> str:
+        if self.field:
+            return f"{self.change_type.title()}: {self.section}.{self.field}: {self.old_value} -> {self.new_value}"
+        return f"{self.change_type.title()}: {self.section}: {self.old_value} -> {self.new_value}"
 
-class ParsingError(ParserException):
-    """Exception raised when parsing fails."""
-    pass
+class DataMerger:
+    def __init__(self, logger: logging.Logger):
+        self.logger = logger
+        self.changes: List[MergeChange] = []
+        self._seen_values: Set[str] = set()
 
-def log_performance(func):
-    """Decorator to log performance of methods."""
-    @wraps(func)
-    def wrapper(*args, **kwargs):
-        logger = args[0].logger  # Assuming the first argument is self
-        start_time = time.time()
-        result = func(*args, **kwargs)
-        end_time = time.time()
-        logger.debug(LOG_METHOD_EXECUTION, func.__name__, end_time - start_time)
-        return result
-    return wrapper
+    @staticmethod
+    def ensure_list(value: Any) -> List[Any]:
+        if value is None:
+            return ["N/A"]
+        if isinstance(value, list):
+            return value
+        if isinstance(value, (dict, set)):
+            return [value]
+        return [value]
 
-class ConfidenceScorer:
-    """Class to compute confidence scores for parsing results."""
+    def merge_field_values(
+        self, existing: Any, new: Any, field_config: Optional[Dict[str, Any]] = None
+    ) -> List[Any]:
+        existing_list = self.ensure_list(existing)
+        new_list = self.ensure_list(new)
+        if field_config:
+            field_type = field_config.get("type")
+            if field_type == "boolean":
+                return [bool(new_list[-1])]
+            elif field_type == "date":
+                return self._format_dates(new_list)
+            elif field_type == "email":
+                return [email.lower().strip() for email in new_list if email != "N/A"]
+        if any(v != "N/A" for v in new_list):
+            existing_list = [v for v in existing_list if v != "N/A"]
+        self._seen_values.clear()
+        merged = []
+        for item in existing_list + new_list:
+            if item != "N/A":
+                item_str = str(item)
+                if item_str not in self._seen_values:
+                    self._seen_values.add(item_str)
+                    merged.append(item)
+        return merged if merged else ["N/A"]
 
-    def __init__(self, config: Dict[str, Any]):
-        self.config = config
+    def _format_dates(self, dates: List[str]) -> List[str]:
+        from datetime import datetime
 
-    def calculate_regex_match_quality(self, match_confidences: Dict[str, float]) -> float:
-        """Calculate confidence based on regex match qualities."""
-        if not match_confidences:
-            return 0.0
-        average_confidence = sum(match_confidences.values()) / len(match_confidences)
-        return average_confidence
+        formatted = []
+        for date in dates:
+            try:
+                if date != "N/A":
+                    dt = datetime.fromisoformat(date.replace("Z", "+00:00"))
+                    formatted.append(dt.strftime("%Y-%m-%d"))
+            except ValueError:
+                self.logger.warning(f"Invalid date format: {date}")
+        return formatted if formatted else ["N/A"]
 
-    def incorporate_ner_confidence_scores(self, ner_results: List[Dict[str, Any]]) -> float:
-        """Calculate confidence based on NER model outputs."""
-        if not ner_results:
-            return 0.0
-        total_score = sum(entity.get('score', 0.0) for entity in ner_results)
-        average_score = total_score / len(ner_results)
-        return average_score
-
-    def evaluate_fuzzy_matching_results(self, fuzzy_scores: Dict[str, float]) -> float:
-        """Calculate confidence based on fuzzy matching results."""
-        if not fuzzy_scores:
-            return 0.0
-        average_score = sum(fuzzy_scores.values()) / len(fuzzy_scores)
-        return average_score
-
-    def compute_overall_document_confidence(self, confidences: Dict[str, float]) -> str:
-        """Compute the overall document confidence level."""
-        total_confidence = sum(confidences.values()) / len(confidences) if confidences else 0.0
-        if total_confidence >= CONFIDENCE_HIGH_THRESHOLD:
-            return 'High'
-        elif total_confidence >= CONFIDENCE_MEDIUM_THRESHOLD:
-            return 'Medium'
-        else:
-            return 'Low'
-class HybridParser(BaseParser):
-    """Hybrid parser for comprehensive and efficient email parsing."""
-
-    def __init__(self, config_path: Optional[str] = None):
-        """
-        Initialize the HybridParser with configuration, models, and patterns.
-
-        Args:
-            config_path (str, optional): Path to the YAML configuration file.
-        """
-        super().__init__()
-        self.logger = self._setup_logger()
-        self.config = self.load_config(config_path)
-        self.email_parser = EmailParser(policy=policy.default)
-        self.nlp = None
-        self.transformer = None
-        self.confidence_scorer = ConfidenceScorer(self.config)
-        self.patterns = {}
-        self.additional_patterns = {}
-        self.section_headers = []
-        self._initialize_models()
-        self._compile_patterns()
-
-    def _setup_logger(self) -> logging.Logger:
-        """Set up the logger for the parser."""
-        logger = logging.getLogger(self.__class__.__name__)
-        if not logger.handlers:
-            logger.setLevel(logging.DEBUG)
+class EnhancedParser(BaseParser):
+    def __init__(
+        self,
+        socketio: Optional[Any] = None,
+        sid: Optional[str] = None,
+        logger: Optional[logging.Logger] = None,
+    ):
+        self.logger = logger or logging.getLogger(self.__class__.__name__)
+        self.logger.setLevel(logging.DEBUG)
+        if not self.logger.handlers:
             handler = logging.StreamHandler()
+            handler.setLevel(logging.DEBUG)
             formatter = logging.Formatter(
-                '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+                "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
             )
             handler.setFormatter(formatter)
-            logger.addHandler(handler)
-        return logger
-
-    @log_performance
-    def load_config(self, config_path: Optional[str] = None) -> Dict[str, Any]:
-        """
-        Load configuration from a YAML file or use default settings.
-
-        Args:
-            config_path (str, optional): Path to the YAML configuration file.
-
-        Returns:
-            dict: Configuration dictionary.
-        """
-        if config_path and os.path.exists(config_path):
-            try:
-                with open(config_path, "r", encoding="utf-8") as file:
-                    config = yaml.safe_load(file)
-                self.logger.info(LOG_LOADING_CONFIG, config_path)
-            except (IOError, yaml.YAMLError) as e:
-                self.logger.error("Error loading config file '%s': %s", config_path, e)
-                raise ConfigurationError(f"Error loading config file '{config_path}': {e}")
-        else:
-            config = self.default_config()
-            self.logger.info(LOG_LOADING_DEFAULT_CONFIG)
-        self.validate_config(config)
-        return config
-
-    def validate_config(self, config: Dict[str, Any]) -> None:
-        """
-        Validate the loaded configuration.
-
-        Args:
-            config (dict): Configuration dictionary.
-
-        Raises:
-            ConfigurationError: If validation fails.
-        """
-        required_keys = ["section_headers", "patterns"]
-        for key in required_keys:
-            if key not in config:
-                raise ConfigurationError(f"Missing required config key: {key}")
-
-    def default_config(self) -> Dict[str, Any]:
-        """Provide default configuration for the parser."""
-        return {
-            "section_headers": [
-                SECTION_REQUESTING_PARTY,
-                SECTION_INSURED_INFORMATION,
-                SECTION_ADJUSTER_INFORMATION,
-                SECTION_ASSIGNMENT_INFORMATION,
-                SECTION_ADDITIONAL_DETAILS,
-                SECTION_ATTACHMENTS,
-            ],
-            "patterns": {
-                SECTION_REQUESTING_PARTY: {
-                    FIELD_INSURANCE_COMPANY: r"(?i)insurance\s*company\s*:?\s*(.*)",
-                    FIELD_HANDLER: r"(?i)handler\s*:?\s*(.*)",
-                    FIELD_CARRIER_CLAIM_NUMBER: r"(?i)(?:carrier\s*)?claim\s*number\s*:?\s*(.*)",
-                },
-                SECTION_INSURED_INFORMATION: {
-                    FIELD_NAME: r"(?i)name\s*:?\s*(.*)",
-                    FIELD_CONTACT_NUMBER: r"(?i)contact(?:\s*#)?\s*:?\s*(.*)",
-                    FIELD_LOSS_ADDRESS: r"(?i)loss\s*address\s*:?\s*(.*)",
-                    FIELD_PUBLIC_ADJUSTER: r"(?i)public\s*adjuster\s*:?\s*(.*)",
-                    FIELD_OWNER_OR_TENANT: r"(?i)(?:is\s*the\s*insured\s*an?\s*)?owner\s*or\s*tenant.*?:?\s*(.*)",
-                },
-                SECTION_ADJUSTER_INFORMATION: {
-                    FIELD_ADJUSTER_NAME: r"(?i)adjuster\s*name\s*:?\s*(.*)",
-                    FIELD_ADJUSTER_PHONE_NUMBER: r"(?i)adjuster\s*phone\s*number\s*:?\s*(\+?[\d\s\-().]{7,})",
-                    FIELD_ADJUSTER_EMAIL: r"(?i)adjuster\s*email\s*:?\s*([\w\.-]+@[\w\.-]+\.\w+)",
-                    FIELD_JOB_TITLE: r"(?i)job\s*title\s*:?\s*(.*)",
-                    FIELD_ADDRESS: r"(?i)address\s*:?\s*(.*)",
-                    FIELD_POLICY_NUMBER: r"(?i)policy(?:\s*#)?\s*:?\s*(\w+)",
-                },
-                SECTION_ASSIGNMENT_INFORMATION: {
-                    FIELD_DATE_OF_LOSS: r"(?i)date\s*of\s*loss(?:/occurrence)?\s*:?\s*(.*)",
-                    FIELD_CAUSE_OF_LOSS: r"(?i)cause\s*of\s*loss\s*:?\s*(.*)",
-                    FIELD_FACTS_OF_LOSS: r"(?i)facts\s*of\s*loss\s*:?\s*(.*)",
-                    FIELD_LOSS_DESCRIPTION: r"(?i)loss\s*description\s*:?\s*(.*)",
-                    FIELD_RESIDENCE_OCCUPIED: r"(?i)residence\s*occupied\s*during\s*loss\s*:?\s*(.*)",
-                    FIELD_SOMEONE_HOME: r"(?i)was\s*someone\s*home\s*at\s*time\s*of\s*damage\s*:?\s*(.*)",
-                    FIELD_REPAIR_PROGRESS: r"(?i)repair(?:\s*or\s*mitigation)?\s*progress\s*:?\s*(.*)",
-                    FIELD_TYPE: r"(?i)type\s*:?\s*(.*)",
-                    FIELD_INSPECTION_TYPE: r"(?i)inspection\s*type\s*:?\s*(.*)",
-                    FIELD_WIND: r"(?i)wind\s*\[(.*?)\]",
-                    FIELD_STRUCTURAL: r"(?i)structural\s*\[(.*?)\]",
-                    FIELD_HAIL: r"(?i)hail\s*\[(.*?)\]",
-                    FIELD_FOUNDATION: r"(?i)foundation\s*\[(.*?)\]",
-                    FIELD_OTHER: r"(?i)other\s*\[(.*?)\].*?(?:details?)?\s*:?\s*(.*)",
-                },
-                SECTION_ADDITIONAL_DETAILS: {
-                    FIELD_ADDITIONAL_DETAILS: r"(?i)additional\s*details?(?:/special\s*instructions?)?\s*:?\s*(.*)"
-                },
-                SECTION_ATTACHMENTS: {
-                    FIELD_ATTACHMENTS: r"(?i)attachment(?:s)?\s*:?\s*(.*)"
-                },
-            },
-            "additional_patterns": {
-                SECTION_REQUESTING_PARTY: {
-                    FIELD_POLICY_NUMBER: r"(?i)policy(?:\s*#)?\s*:?\s*(\w+)",
-                    FIELD_CARRIER_CLAIM_NUMBER: r"(?i)(?:carrier\s*)?claim\s*number\s*:?\s*(.*)",
-                },
-                SECTION_ASSIGNMENT_INFORMATION: {
-                    FIELD_DATE_OF_LOSS: r"(?i)date\s*of\s*loss(?:/occurrence)?\s*:?\s*(.*)"
-                },
-            },
-            "date_formats": [
-                "%m/%d/%Y",
-                "%d/%m/%Y",
-                "%Y-%m-%d",
-                "%B %d, %Y",
-                "%b %d, %Y",
-                "%d %B %Y",
-                "%d %b %Y",
-                "%Y/%m/%d",
-                "%d-%m-%Y",
-                "%Y.%m.%d",
-                "%d.%m.%Y",
-                "%m-%d-%Y",
-                "%Y%m%d",
-                "%Y-%m-%dT%H:%M:%S",
-                "%Y-%m-%dT%H:%M:%S.%fZ",
-            ],
-            "boolean_values": {
-                "positive": [
-                    "yes",
-                    "y",
-                    "true",
-                    "t",
-                    "1",
-                    "x",
-                    "[x]",
-                    "[X]",
-                    "(x)",
-                    "(X)",
-                ],
-                "negative": [
-                    "no",
-                    "n",
-                    "false",
-                    "f",
-                    "0",
-                    "[ ]",
-                    "()",
-                    "[N/A]",
-                    "(N/A)",
-                ],
-            },
-            "fuzzy_match_fields": [
-                FIELD_INSURANCE_COMPANY,
-                FIELD_HANDLER,
-                FIELD_ADJUSTER_NAME,
-                FIELD_POLICY_NUMBER,
-            ],
-            "known_values": {
-                FIELD_INSURANCE_COMPANY: [
-                    "State Farm",
-                    "Allstate",
-                    "Geico",
-                    "Progressive",
-                    "Nationwide",
-                    "Liberty Mutual",
-                    "Farmers",
-                    "Travelers",
-                    "American Family",
-                    "USAA",
-                ],
-                FIELD_HANDLER: [
-                    "John Doe",
-                    "Jane Smith",
-                    "Emily Davis",
-                    "Michael Brown",
-                    "Sarah Johnson",
-                    "David Wilson",
-                ],
-                FIELD_ADJUSTER_NAME: [
-                    "Michael Brown",
-                    "Sarah Johnson",
-                    "David Wilson",
-                    "Laura Martinez",
-                    "James Anderson",
-                ],
-                FIELD_POLICY_NUMBER: [
-                    "ABC123",
-                    "XYZ789",
-                    "DEF456",
-                    "GHI101",
-                    "JKL202",
-                ],
-            },
-            "post_processing_rules": [
-                {
-                    "field": FIELD_ADJUSTER_EMAIL,
-                    "condition_field": FIELD_ADJUSTER_EMAIL,
-                    "condition_value": "N/A",
-                    "action_value": "unknown@example.com",
-                },
-            ],
-            "fuzzy_match_threshold": 0.8,
-        }
-
-    def _initialize_models(self):
-        """Initialize and download required models."""
-        self._ensure_spacy_model()
-        self._ensure_transformer_model()
-        self._startup_check()
-
-    def _ensure_spacy_model(self):
-        """Ensure spaCy model is downloaded and loaded."""
-        model_name = "en_core_web_trf"  # Using transformer-based model for better accuracy
-        self.logger.info(LOG_MODEL_DOWNLOAD_START, "spaCy")
+            self.logger.addHandler(handler)
+        self.logger.info("Initializing EnhancedParser.")
         try:
-            self.nlp = spacy.load(model_name)
-            self.logger.info(LOG_SPACY_MODEL_LOADED, model_name)
-        except OSError:
-            self.logger.info(LOG_SPACY_MODEL_DOWNLOADED, model_name)
-            spacy.cli.download(model_name)
-            try:
-                self.nlp = spacy.load(model_name)
-                self.logger.info(LOG_SPACY_MODEL_LOADED, model_name)
-            except OSError as e:
-                self.logger.error(LOG_SPACY_MODEL_DOWNLOAD_FAILED, model_name, str(e))
-                raise ModelLoadingError(f"Failed to load spaCy model '{model_name}': {e}")
+            self.config = ConfigLoader.load_config()
+            self.logger.debug("Loaded configuration: %s", self.config)
+            self._check_environment_variables()
+            self.device = "cuda" if torch.cuda.is_available() else "cpu"
+            self.logger.info("Using device: %s", self.device)
+            self.init_ner()
+            self.init_donut()
+            self.init_validation_model()
+            self.init_sentiment_model()
+            self.socketio = socketio
+            self.sid = sid
+            self.timeouts = self._set_timeouts()
+            self.logger.info("EnhancedParser initialized successfully.")
+        except (ValueError, OSError) as e:
+            self.logger.error(
+                "Error during EnhancedParser initialization: %s", e, exc_info=True
+            )
+            raise
 
-    def _ensure_transformer_model(self):
-        """Ensure transformer model is downloaded and loaded."""
-        model_name = "dslim/bert-base-NER"  # Using a suitable NER model
-        self.logger.info(LOG_MODEL_DOWNLOAD_START, "Transformer")
+    def init_sentiment_model(self):
         try:
-            tokenizer = AutoTokenizer.from_pretrained(model_name)
-            model = AutoModelForTokenClassification.from_pretrained(model_name)
-            self.transformer = pipeline(
+            self.logger.info("Initializing Sentiment Analysis Model pipeline.")
+            repo_id = "nlptown/bert-base-multilingual-uncased-sentiment"
+            self.sentiment_pipeline = pipeline(
+                "sentiment-analysis",
+                model=repo_id,
+                tokenizer=repo_id,
+                device=0 if self.device == "cuda" else -1,
+            )
+            self.logger.info("Loaded Sentiment Analysis Model '%s' successfully.", repo_id)
+        except (OSError, ValueError) as e:
+            self.logger.error("Failed to load Sentiment Analysis Model: %s", e, exc_info=True)
+            self.sentiment_pipeline = None
+
+    def init_ner(self):
+        try:
+            self.logger.info("Initializing NER pipeline.")
+            repo_id = "dslim/bert-base-NER"
+            self.ner_pipeline = pipeline(
                 "ner",
-                model=model,
-                tokenizer=tokenizer,
+                model=repo_id,
+                tokenizer=repo_id,
                 aggregation_strategy="simple",
+                device=0 if self.device == "cuda" else -1,
             )
-            self.logger.info(LOG_MODEL_DOWNLOAD_COMPLETE, "Transformer")
-        except Exception as e:
-            self.logger.error(LOG_FAILED_TRANSFORMER, "Transformer", str(e))
-            raise ModelLoadingError(f"Failed to initialize Transformer model: {e}")
+            self.logger.info("Loaded NER model '%s' successfully.", repo_id)
+        except (OSError, ValueError) as e:
+            self.logger.error(
+                "Failed to load NER model '%s': %s", repo_id, e, exc_info=True
+            )
+            self.ner_pipeline = None
 
-    def _startup_check(self):
-        """Verify all required models are available."""
-        self.logger.info(LOG_STARTUP_CHECK_START)
-        missing_models = []
-        if not self.nlp:
-            missing_models.append("spaCy")
-        if not self.transformer:
-            missing_models.append("Transformer")
-        if missing_models:
-            self.logger.error(LOG_STARTUP_CHECK_FAILED, ", ".join(missing_models))
-            raise ModelLoadingError(f"Missing required models: {', '.join(missing_models)}")
-        self.logger.info(LOG_STARTUP_CHECK_COMPLETE)
-
-    def _compile_patterns(self):
-        """Compile regex patterns for performance."""
-        self.section_headers = self.config["section_headers"]
-        self.section_pattern = re.compile(
-            rf'(?i)^\s*(?:\*+\s*)?({"|".join(map(re.escape, self.section_headers))})(?:\s*\*+)?:?\s*$'
-        )
-        self.patterns = {}
-        self.additional_patterns = {}
-        for section, fields in self.config["patterns"].items():
-            self.patterns[section] = {
-                field: re.compile(pattern, re.IGNORECASE | re.DOTALL)
-                for field, pattern in fields.items()
-            }
-        for section, fields in self.config.get("additional_patterns", {}).items():
-            self.additional_patterns[section] = {
-                field: re.compile(pattern, re.IGNORECASE | re.DOTALL)
-                for field, pattern in fields.items()
-            }
-
-    @log_performance
-    def parse(self, email_content: str) -> Dict[str, Any]:
-        """
-        Parse the email content using various techniques to extract key information.
-
-        Args:
-            email_content (str): The raw email content to parse.
-
-        Returns:
-            dict: Parsed data as a dictionary.
-        """
-        self.logger.info("Parsing email content with HybridParser.")
-        extracted_data = {}
-        confidences = {}
+    def init_donut(self):
         try:
-            sections = self.split_into_sections(email_content)
-            with ThreadPoolExecutor() as executor:
-                future_to_section = {
-                    executor.submit(self.extract_section_with_confidence, section, content): section
-                    for section, content in sections.items()
-                }
-                for future in as_completed(future_to_section):
-                    section = future_to_section[future]
-                    try:
-                        data, section_confidences = future.result()
-                        extracted_data.update(data)
-                        confidences.update(section_confidences)
-                    except Exception as e:
-                        self.logger.error(LOG_FAILED_PARSE, e)
-                        extracted_data.update(self.default_section_data())
-                        for field in self.config["patterns"].get(section, {}).keys():
-                            confidences[field] = 0.0
-            # Ensure all required fields are present
-            for field in self.get_all_fields():
-                if field not in extracted_data:
-                    self.logger.warning(LOG_NOT_FOUND, field)
-                    extracted_data[field] = "N/A"
-                    confidences[field] = 0.0
-
-            # Extract entities using spaCy
-            entities = self.extract_entities(email_content)
-            ner_confidence = self.confidence_scorer.incorporate_ner_confidence_scores(entities.get('Entities', []))
-            extracted_data["Entities"] = entities.get('Entities', {})
-            confidences['Entities'] = ner_confidence
-
-            # Extract entities using Transformer model and merge
-            transformer_entities = self.transformer_extraction(email_content)
-            transformer_confidence = self.confidence_scorer.incorporate_ner_confidence_scores(transformer_entities.get('TransformerEntities', []))
-            extracted_data["TransformerEntities"] = transformer_entities.get("TransformerEntities", {})
-            confidences['TransformerEntities'] = transformer_confidence
-
-            # Reconcile entities and compute entity confidence
-            reconciled_entities, entity_confidence = self.reconcile_entities(
-                extracted_data.get("Entities", {}),
-                extracted_data.get("TransformerEntities", {})
+            self.logger.info("Initializing Donut model and processor.")
+            repo_id = "naver-clova-ix/donut-base-finetuned-cord-v2"
+            self.donut_processor = DonutProcessor.from_pretrained(
+                repo_id, cache_dir=".cache"
             )
-            extracted_data["ReconciledEntities"] = reconciled_entities
-            confidences['ReconciledEntities'] = entity_confidence
-
-            # Apply fuzzy matching to improve data accuracy
-            fuzzy_scores = {}
-            extracted_data = self.fuzzy_match_fields(email_content, extracted_data, fuzzy_scores)
-            fuzzy_confidence = self.confidence_scorer.evaluate_fuzzy_matching_results(fuzzy_scores)
-            confidences['FuzzyMatching'] = fuzzy_confidence
-
-            # Apply post-processing rules
-            extracted_data = self.apply_rules(extracted_data)
-
-            # Compute overall confidence
-            overall_confidence_level = self.confidence_scorer.compute_overall_document_confidence(confidences)
-            extracted_data['OverallConfidence'] = overall_confidence_level
-
-            # Validate the parsed data against the JSON schema
-            self.cross_field_validation(extracted_data)
-            is_valid, error_message = validate_json(extracted_data)
-            if not is_valid:
-                self.logger.error(LOG_VALIDATION_ERROR, error_message)
-                raise ValueError(LOG_VALIDATION_ERROR % error_message)
-
-            self.logger.debug(LOG_PARSER_DEBUG, extracted_data)
-            self.logger.info(LOG_PARSER_SUCCESS)
-            return extracted_data
-
-        except Exception as e:
-            self.logger.error(LOG_FAILED_PARSE, e)
-            extracted_data = self.fallback_to_rule_based_parser(email_content)
-            return extracted_data
-
-    def extract_section_with_confidence(self, section: str, content: str) -> Tuple[Dict[str, Any], Dict[str, float]]:
-        extract_method = getattr(
-            self, f"extract_{self.snake_case(section)}", None
-        )
-        if extract_method:
-            data, confidences = extract_method(content)
-        else:
-            self.logger.warning(
-                "No extraction method found for section: %s", section
+            self.donut_model = VisionEncoderDecoderModel.from_pretrained(
+                repo_id, cache_dir=".cache"
             )
-            data, confidences = self.default_section_data(), {}
-            for field in self.config["patterns"].get(section, {}).keys():
-                confidences[field] = 0.0
-        return data, confidences
+            self.donut_model.to(self.device)
+            self.logger.info("Loaded Donut model '%s' successfully.", repo_id)
+        except (OSError, ValueError) as e:
+            self.logger.error(
+                "Failed to load Donut model '%s': %s", repo_id, e, exc_info=True
+            )
+            self.donut_model = None
+            self.donut_processor = None
 
-    def snake_case(self, text: str) -> str:
-        """
-        Convert text to snake_case, replacing special characters with underscores.
-
-        Args:
-            text (str): The text to convert.
-
-        Returns:
-            str: The snake_case version of the text.
-        """
-        text = re.sub(r'[\/\(\)]', '_', text)  # Replace /, (, ) with _
-        text = re.sub(r"[^\w\s]", "", text)
-        text = re.sub(r"\s+", "_", text.strip().lower())
-        text = re.sub(r'__+', '_', text)  # Replace multiple underscores with single
-        return text.strip('_')
-
-    @log_performance
-    def split_into_sections(self, email_content: str) -> Dict[str, str]:
-        """
-        Split the email content into sections based on headers.
-
-        Args:
-            email_content (str): The raw email content.
-
-        Returns:
-            dict: A dictionary with section headers as keys and their content as values.
-        """
-        self.logger.debug(LOG_EXTRACTING_SECTIONS)
-        sections = {}
-        current_section = None
-        content_buffer = []
-
-        for line in email_content.splitlines():
-            line = line.strip()
-            if not line:
-                continue
-
-            header_match = self.section_pattern.match(line)
-            if header_match:
-                if current_section:
-                    sections[current_section] = "\n".join(content_buffer).strip()
-                    content_buffer = []
-                current_section = header_match.group(1)
-                self.logger.debug(LOG_SECTION_HEADER, current_section)
-            elif current_section:
-                content_buffer.append(line)
-
-        if current_section and content_buffer:
-            sections[current_section] = "\n".join(content_buffer).strip()
-
-        self.logger.debug(LOG_SECTION_FOUND, list(sections.keys()))
-        return sections
-
-    def get_all_fields(self) -> List[str]:
-        """
-        Retrieve a list of all field names from the configuration.
-
-        Returns:
-            list: List of all field names.
-        """
-        fields = []
-        for section in self.config["patterns"]:
-            fields.extend(self.config["patterns"][section].keys())
-        for section in self.config.get("additional_patterns", {}):
-            fields.extend(self.config["additional_patterns"][section].keys())
-        return list(set(fields))
-
-    def default_section_data(self) -> Dict[str, Any]:
-        """
-        Provide default data structure with flat fields.
-
-        Returns:
-            dict: Default data with 'N/A' or appropriate defaults.
-        """
-        default_data = {
-            FIELD_INSURANCE_COMPANY: "N/A",
-            FIELD_HANDLER: "N/A",
-            FIELD_CARRIER_CLAIM_NUMBER: "N/A",
-            FIELD_NAME: "N/A",
-            FIELD_CONTACT_NUMBER: "N/A",
-            FIELD_LOSS_ADDRESS: "N/A",
-            FIELD_PUBLIC_ADJUSTER: "N/A",
-            FIELD_OWNER_OR_TENANT: "N/A",
-            FIELD_ADJUSTER_NAME: "N/A",
-            FIELD_ADJUSTER_PHONE_NUMBER: "N/A",
-            FIELD_ADJUSTER_EMAIL: "N/A",
-            FIELD_JOB_TITLE: "N/A",
-            FIELD_ADDRESS: "N/A",
-            FIELD_POLICY_NUMBER: "N/A",
-            FIELD_DATE_OF_LOSS: "N/A",
-            FIELD_CAUSE_OF_LOSS: "N/A",
-            FIELD_FACTS_OF_LOSS: "N/A",
-            FIELD_LOSS_DESCRIPTION: "N/A",
-            FIELD_RESIDENCE_OCCUPIED: False,
-            FIELD_SOMEONE_HOME: False,
-            FIELD_REPAIR_PROGRESS: "N/A",
-            FIELD_TYPE: "N/A",
-            FIELD_INSPECTION_TYPE: "N/A",
-            FIELD_WIND: False,
-            FIELD_STRUCTURAL: False,
-            FIELD_HAIL: False,
-            FIELD_FOUNDATION: False,
-            FIELD_OTHER: {"Checked": False, "Details": "N/A"},
-            FIELD_ADDITIONAL_DETAILS: "N/A",
-            FIELD_ATTACHMENTS: [],
-        }
-        return default_data
-
-    def extract_requesting_party(self, text: str) -> Tuple[Dict[str, Any], Dict[str, float]]:
-        """
-        Extract data from the 'Requesting Party' section.
-
-        Args:
-            text (str): Content of the 'Requesting Party' section.
-
-        Returns:
-            Tuple[dict, dict]: Extracted data and confidences.
-        """
-        self.logger.debug(LOG_EXTRACTING_REQUESTING_PARTY)
-        return self._extract_section_data(SECTION_REQUESTING_PARTY, text)
-
-    def extract_insured_information(self, text: str) -> Tuple[Dict[str, Any], Dict[str, float]]:
-        """
-        Extract data from the 'Insured Information' section.
-
-        Args:
-            text (str): Content of the 'Insured Information' section.
-
-        Returns:
-            Tuple[dict, dict]: Extracted data and confidences.
-        """
-        self.logger.debug(LOG_EXTRACTING_INSURED_INFORMATION)
-        return self._extract_section_data(SECTION_INSURED_INFORMATION, text)
-
-    def extract_adjuster_information(self, text: str) -> Tuple[Dict[str, Any], Dict[str, float]]:
-        """
-        Extract data from the 'Adjuster Information' section.
-
-        Args:
-            text (str): Content of the 'Adjuster Information' section.
-
-        Returns:
-            Tuple[dict, dict]: Extracted data and confidences.
-        """
-        self.logger.debug(LOG_EXTRACTING_ADJUSTER_INFORMATION)
-        return self._extract_section_data(SECTION_ADJUSTER_INFORMATION, text)
-
-    def extract_assignment_information(self, text: str) -> Tuple[Dict[str, Any], Dict[str, float]]:
-        """
-        Extract data from the 'Assignment Information' section, including Assignment Type.
-
-        Args:
-            text (str): Content of the 'Assignment Information' section.
-
-        Returns:
-            Tuple[dict, dict]: Extracted data and confidences.
-        """
-        self.logger.debug(LOG_EXTRACTING_ASSIGNMENT_INFORMATION)
-        data, confidences = self._extract_section_data(SECTION_ASSIGNMENT_INFORMATION, text)
-
-        # Handle Assignment Type within Assignment Information
-        assignment_type = {
-            FIELD_WIND: False,
-            FIELD_STRUCTURAL: False,
-            FIELD_HAIL: False,
-            FIELD_FOUNDATION: False,
-            FIELD_OTHER: {"Checked": False, "Details": "N/A"},
-        }
-
-        for key in [FIELD_WIND, FIELD_STRUCTURAL, FIELD_HAIL, FIELD_FOUNDATION, FIELD_OTHER]:
-            pattern = self.patterns[SECTION_ASSIGNMENT_INFORMATION].get(key)
-            if pattern:
-                match = pattern.search(text)
-                if match:
-                    if key != FIELD_OTHER:
-                        assignment_type[key] = bool(match.group(1).strip().lower() == 'x')
-                        self.logger.debug(
-                            LOG_FOUND, f"Assignment Type '{key}'",
-                            "Checked" if assignment_type[key] else "Unchecked"
-                        )
-                        confidences[key] = 1.0
-                    else:
-                        assignment_type[key]["Checked"] = bool(match.group(1).strip().lower() == 'x')
-                        details = match.group(2).strip() if match.lastindex >= 2 else "N/A"
-                        assignment_type[key]["Details"] = details if details else "N/A"
-                        self.logger.debug(LOG_FOUND_ADDITIONAL, f"Assignment Type '{key}'", details)
-                        confidences[key] = 1.0
-                else:
-                    if key != FIELD_OTHER:
-                        assignment_type[key] = False
-                        self.logger.debug(LOG_FOUND, f"Assignment Type '{key}'", "Unchecked")
-                        confidences[key] = 0.0
-                    else:
-                        assignment_type[key]["Checked"] = False
-                        assignment_type[key]["Details"] = "N/A"
-                        self.logger.debug(LOG_FOUND_ADDITIONAL, f"Assignment Type '{key}'", "N/A")
-                        confidences[key] = 0.0
-            else:
-                if key != FIELD_OTHER:
-                    assignment_type[key] = False
-                else:
-                    assignment_type[key]["Checked"] = False
-                    assignment_type[key]["Details"] = "N/A"
-                confidences[key] = 0.0
-
-        # Flatten assignment_type into data
-        for key, value in assignment_type.items():
-            if isinstance(value, dict):
-                data[f"{key}_Checked"] = value["Checked"]
-                data[f"{key}_Details"] = value["Details"]
-            else:
-                data[key] = value
-
-        return data, confidences
-
-    def extract_additional_details_special_instructions(self, text: str) -> Tuple[Dict[str, Any], Dict[str, float]]:
-        """
-        Extract additional details or special instructions.
-
-        Args:
-            text (str): Content of the 'Additional Details/Special Instructions' section.
-
-        Returns:
-            Tuple[dict, dict]: Extracted data and confidences.
-        """
-        self.logger.debug(LOG_EXTRACTING_ADDITIONAL_DETAILS)
-        pattern = self.patterns.get(SECTION_ADDITIONAL_DETAILS, {}).get(
-            FIELD_ADDITIONAL_DETAILS
-        )
-        data = {}
-        confidences = {}
-        if pattern:
-            match = pattern.search(text)
-            value = match.group(1).strip() if match else "N/A"
-            if value != "N/A":
-                data[FIELD_ADDITIONAL_DETAILS] = value
-                confidences[FIELD_ADDITIONAL_DETAILS] = 1.0
-                self.logger.debug(
-                    LOG_FOUND, FIELD_ADDITIONAL_DETAILS, value,
-                )
-            else:
-                data[FIELD_ADDITIONAL_DETAILS] = "N/A"
-                confidences[FIELD_ADDITIONAL_DETAILS] = 0.0
-                self.logger.debug(LOG_NOT_FOUND, FIELD_ADDITIONAL_DETAILS)
-        else:
-            data[FIELD_ADDITIONAL_DETAILS] = "N/A"
-            confidences[FIELD_ADDITIONAL_DETAILS] = 0.0
-            self.logger.debug(LOG_NOT_FOUND, FIELD_ADDITIONAL_DETAILS)
-        return data, confidences
-
-    def extract_attachments(self, text: str) -> Tuple[Dict[str, Any], Dict[str, float]]:
-        """
-        Extract attachment information.
-
-        Args:
-            text (str): Content of the 'Attachments' section.
-
-        Returns:
-            Tuple[dict, dict]: Extracted attachments and confidences.
-        """
-        self.logger.debug(LOG_EXTRACTING_ATTACHMENTS)
-        pattern = self.patterns.get(SECTION_ATTACHMENTS, {}).get(FIELD_ATTACHMENTS)
-        data = {}
-        confidences = {}
-        if pattern:
-            match = pattern.search(text)
-            if match:
-                attachments = match.group(1).strip()
-                if attachments.lower() != "n/a" and attachments:
-                    attachment_list = [
-                        att.strip()
-                        for att in re.split(r"[,;\n•–-]", attachments)
-                        if att.strip()
-                        and (
-                            self.is_valid_attachment(att.strip())
-                            or self.is_valid_url(att.strip())
-                        )
-                    ]
-                    data[FIELD_ATTACHMENTS] = attachment_list
-                    confidences[FIELD_ATTACHMENTS] = 1.0
-                    self.logger.debug(LOG_FOUND, FIELD_ATTACHMENTS, attachment_list)
-                else:
-                    attachment_list = []
-                    data[FIELD_ATTACHMENTS] = attachment_list
-                    confidences[FIELD_ATTACHMENTS] = 0.0
-                    self.logger.debug("Attachments marked as 'N/A' or empty.")
-            else:
-                attachment_list = []
-                data[FIELD_ATTACHMENTS] = attachment_list
-                confidences[FIELD_ATTACHMENTS] = 0.0
-                self.logger.debug("Attachment(s) not found, set to empty list")
-        else:
-            data[FIELD_ATTACHMENTS] = []
-            confidences[FIELD_ATTACHMENTS] = 0.0
-            self.logger.debug(LOG_NOT_FOUND, FIELD_ATTACHMENTS)
-        return data, confidences
-
-    def is_valid_attachment(self, attachment: str) -> bool:
-        """
-        Validate file extensions.
-
-        Args:
-            attachment (str): Attachment filename.
-
-        Returns:
-            bool: True if valid, else False.
-        """
-        valid_extensions = [
-            ".pdf",
-            ".docx",
-            ".xlsx",
-            ".zip",
-            ".png",
-            ".jpg",
-            ".jpeg",
-            ".gif",
-        ]
-        return any(attachment.lower().endswith(ext) for ext in valid_extensions)
-
-    def is_valid_url(self, attachment: str) -> bool:
-        """
-        Validate URLs using urllib.parse.
-
-        Args:
-            attachment (str): Attachment URL.
-
-        Returns:
-            bool: True if valid URL, else False.
-        """
+    def init_validation_model(self):
         try:
-            result = urlparse(attachment)
-            return all([result.scheme, result.netloc])
-        except Exception:
+            self.logger.info("Initializing Validation Model pipeline.")
+            hf_token = os.getenv("HF_TOKEN")
+            if not hf_token:
+                raise ValueError("Hugging Face token not found in environment variables.")
+            login(token=hf_token)
+            self.logger.info("Logged in to Hugging Face Hub successfully.")
+            repo_id = "facebook/bart-large"
+            self.validation_pipeline = pipeline(
+                "text2text-generation",
+                model=repo_id,
+                tokenizer=repo_id,
+                device=0 if self.device == "cuda" else -1,
+            )
+            self.logger.info("Loaded Validation Model '%s' successfully.", repo_id)
+        except (OSError, ValueError) as e:
+            self.logger.error("Failed to load Validation Model: %s", e, exc_info=True)
+            self.validation_pipeline = None
+
+    def health_check(self) -> bool:
+        components_healthy = all(
+            [
+                hasattr(self, "ner_pipeline") and self.ner_pipeline is not None,
+                hasattr(self, "donut_model") and self.donut_model is not None,
+                hasattr(self, "validation_pipeline") and self.validation_pipeline is not None,
+                hasattr(self, "sentiment_pipeline") and self.sentiment_pipeline is not None,
+            ]
+        )
+        if not components_healthy:
+            self.logger.error("One or more components failed to initialize.")
             return False
+        self.logger.info("All components are initialized and healthy.")
+        return True
 
-    def extract_entities(self, email_content: str) -> Dict[str, List[str]]:
-        """
-        Extract named entities from the email content using spaCy.
+    def _check_environment_variables(self):
+        required_vars = ["HF_TOKEN"]
+        missing_vars = [var for var in required_vars if not os.getenv(var)]
+        if missing_vars:
+            self.logger.error(
+                "Missing required environment variables: %s", ", ".join(missing_vars)
+            )
+            raise ValueError(
+                f"Missing required environment variables: {', '.join(missing_vars)}"
+            )
 
-        Args:
-            email_content (str): The raw email content.
+    def _set_timeouts(self) -> Dict[str, int]:
+        timeouts = {
+            "ner_parsing": self.config.get("model_timeouts", {}).get("ner_parsing", 30),
+            "donut_parsing": self.config.get("model_timeouts", {}).get(
+                "donut_parsing", 60
+            ),
+            "validation_parsing": self.config.get("model_timeouts", {}).get(
+                "validation_parsing", 30
+            ),
+            "schema_validation": self.config.get("model_timeouts", {}).get(
+                "schema_validation", 30
+            ),
+            "post_processing": self.config.get("model_timeouts", {}).get(
+                "post_processing", 30
+            ),
+            "json_validation": self.config.get("model_timeouts", {}).get(
+                "json_validation", 30
+            ),
+            "sentiment_analysis": self.config.get("model_timeouts", {}).get(
+                "sentiment_analysis", 30
+            ),
+        }
+        self.logger.debug("Set processing timeouts: %s", timeouts)
+        return timeouts
 
-        Returns:
-            dict: Extracted entities.
-        """
-        self.logger.debug("Extracting Named Entities using spaCy.")
-        try:
-            doc = self.nlp(email_content)
-            entities = {}
-            relevant_labels = {"PERSON", "ORG", "GPE", "DATE", "PRODUCT"}
-            for ent in doc.ents:
-                if ent.label_ in relevant_labels:
-                    entities.setdefault(ent.label_, []).append(ent.text)
-            # Remove duplicates
-            for label in entities:
-                entities[label] = list(set(entities[label]))
-            self.logger.debug(LOG_ENTITIES, entities)
-            return {"Entities": entities}
-        except (ValueError, RuntimeError, AttributeError) as e:
-            self.logger.error(LOG_FAILED_EXTRACT_ENTITIES_SPACY, e)
-            return {"Entities": {}}
-        except Exception as e:
-            self.logger.error(LOG_FAILED_EXTRACT_ENTITIES_SPACY, e)
-            return {"Entities": {}}
-
-    def transformer_extraction(self, text: str) -> Dict[str, Dict[str, List[str]]]:
-        """
-        Extract named entities using the transformer-based model.
-
-        Args:
-            text (str): The raw email content.
-
-        Returns:
-            dict: Extracted entities from Transformer model.
-        """
-        self.logger.debug("Extracting Named Entities using Transformer model.")
-        try:
-            transformer_entities = self.transformer(text)
-            entities = {}
-            for entity in transformer_entities:
-                label = entity.get("entity_group") or entity.get("entity")
-                word = entity.get("word")
-                if not label or not word:
-                    continue  # Skip if no label or word is found
-                entities.setdefault(label, []).append(word)
-            # Remove duplicates
-            for label in entities:
-                entities[label] = list(set(entities[label]))
-            self.logger.debug(LOG_TRANSFORMER_ENTITIES, entities)
-            return {"TransformerEntities": entities}
-        except (ValueError, RuntimeError) as e:
-            self.logger.error(LOG_FAILED_EXTRACT_ENTITIES_TRANSFORMER, e)
-            return {"TransformerEntities": {}}
-        except Exception as e:
-            self.logger.error(LOG_FAILED_EXTRACT_ENTITIES_TRANSFORMER, e)
-            return {"TransformerEntities": {}}
-
-    def fuzzy_match_fields(
-        self, text: str, parsed_data: Dict[str, Any], fuzzy_scores: Dict[str, float]
+    def parse_email(
+        self,
+        email_content: Optional[str] = None,
+        document_image: Optional[Union[str, Image.Image]] = None,
     ) -> Dict[str, Any]:
-        """
-        Apply fuzzy matching to specified fields to improve data accuracy.
-
-        Args:
-            text (str): The raw email content.
-            parsed_data (dict): The currently parsed data.
-            fuzzy_scores (dict): Dictionary to store fuzzy matching scores.
-
-        Returns:
-            dict: Updated parsed data with fuzzy matched fields.
-        """
-        self.logger.debug("Applying fuzzy matching to specified fields.")
+        if not self.validate_input(email_content, document_image):
+            self.logger.error("Invalid input provided to parse_email.")
+            return {}
+        parsed_data = self.parse(email_content, document_image)
         try:
-            fuzzy_fields = self.config.get("fuzzy_match_fields", [])
-            for field in fuzzy_fields:
-                if parsed_data.get(field) == "N/A":
-                    known_values = self.config.get("known_values", {}).get(field, [])
-                    best_match, best_score = self.adaptive_fuzzy_match(
-                        text,
-                        tuple(known_values),
-                        self.config.get("fuzzy_match_threshold", 0.8),
-                    )
-                    if best_match:
-                        parsed_data[field] = best_match
-                        fuzzy_scores[field] = best_score
-                        self.logger.debug(LOG_FUZZY_MATCHED, field, best_match)
-                    else:
-                        fuzzy_scores[field] = 0.0
+            is_valid, error_message = validate_json(parsed_data)
+            if not is_valid:
+                self.logger.warning(f"JSON validation failed: {error_message}")
+                parsed_data["validation_issues"] = parsed_data.get(
+                    "validation_issues", []
+                )
+                parsed_data["validation_issues"].append(error_message)
+            formatted_data = {}
+            missing_fields = []
+            for section, fields in QUICKBASE_SCHEMA.items():
+                if isinstance(fields, dict):
+                    formatted_section = {}
+                    for field, field_config in fields.items():
+                        if (
+                            isinstance(field_config, dict)
+                            and "field_id" in field_config
+                        ):
+                            section_data = parsed_data.get(section, {})
+                            value = (
+                                section_data.get(field, ["N/A"])[0]
+                                if isinstance(section_data.get(field), list)
+                                else section_data.get(field, "N/A")
+                            )
+                            if field_config.get("required", False) and (
+                                not value or value == "N/A"
+                            ):
+                                missing_fields.append(f"{section} -> {field}")
+                            formatted_data.setdefault(section, {})[field] = value
+            parsed_data["formatted_output"] = formatted_data
+            if missing_fields:
+                parsed_data["validation_issues"] = parsed_data.get(
+                    "validation_issues", []
+                )
+                parsed_data["validation_issues"].extend(
+                    [f"Missing required field: {field}" for field in missing_fields]
+                )
             return parsed_data
         except Exception as e:
-            self.logger.error(LOG_FAILED_FUZZY_MATCHING, e)
+            self.logger.error(f"Error in parse_email: {str(e)}", exc_info=True)
             return parsed_data
 
-    @lru_cache(maxsize=128)
-    def adaptive_fuzzy_match(self, text: str, known_values: Tuple[str], threshold: float) -> Tuple[Optional[str], float]:
-        """
-        Adaptive fuzzy matching with configurable thresholds and caching.
-
-        Args:
-            text (str): The text to match.
-            known_values (tuple): Tuple of known values.
-            threshold (float): Threshold for matching.
-
-        Returns:
-            Tuple[Optional[str], float]: Best match and its score.
-        """
-        best_match = None
-        best_score = 0
-        for value in known_values:
-            score = fuzz.partial_ratio(value.lower(), text.lower()) / 100.0
-            if score > best_score:
-                best_score = score
-                best_match = value
-        if best_score >= threshold:
-            return best_match, best_score
-        else:
-            return None, best_score
-
-    def reconcile_entities(self, spacy_entities: Dict[str, List[str]], transformer_entities: Dict[str, List[str]]) -> Tuple[Dict[str, List[str]], float]:
-        """
-        Reconcile entities from spaCy and transformer models.
-
-        Args:
-            spacy_entities (dict): Entities from spaCy.
-            transformer_entities (dict): Entities from transformer model.
-
-        Returns:
-            Tuple[dict, float]: Reconciled entities and confidence score.
-        """
-        self.logger.debug("Reconciling entities from spaCy and Transformer models.")
-        reconciled = {}
-        total_entities = 0
-        matched_entities = 0
-        for label in set(spacy_entities.keys()).union(transformer_entities.keys()):
-            spacy_set = set(spacy_entities.get(label, []))
-            transformer_set = set(transformer_entities.get(label, []))
-            combined = spacy_set.union(transformer_set)
-            reconciled[label] = list(combined)
-            total_entities += len(combined)
-            matched_entities += len(spacy_set.intersection(transformer_set))
-        # Compute confidence as ratio of matched entities to total entities
-        entity_confidence = (matched_entities / total_entities) if total_entities else 0.0
-        return reconciled, entity_confidence
-
-    def apply_rules(self, parsed_data: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Apply rule-based post-processing to the parsed data.
-
-        Args:
-            parsed_data (dict): The currently parsed data.
-
-        Returns:
-            dict: Updated parsed data after applying rules.
-        """
-        self.logger.debug("Applying post-processing rules.")
-        try:
-            for rule in self.config.get("post_processing_rules", []):
-                field = rule["field"]
-                condition_field = rule["condition_field"]
-                condition_value = rule["condition_value"]
-                action_value = rule["action_value"]
-                if parsed_data.get(condition_field) == condition_value:
-                    parsed_data[field] = action_value
-                    self.logger.debug(LOG_APPLIED_RULE, field, parsed_data[field])
-            return parsed_data
-        except (KeyError, TypeError) as e:
-            self.logger.error(LOG_FAILED_POST_PROCESSING, e)
-            return parsed_data
-        except Exception as e:
-            self.logger.error(LOG_FAILED_POST_PROCESSING, e)
-            return parsed_data
-
-    def format_phone_number(self, phone: str) -> str:
-        """
-        Format the phone number to a standard format.
-
-        Args:
-            phone (str): The raw phone number.
-
-        Returns:
-            str: Formatted phone number.
-        """
-        digits = re.sub(r"\D", "", phone)
-        try:
-            parsed_number = phonenumbers.parse(phone, "US")
-            return phonenumbers.format_number(
-                parsed_number, phonenumbers.PhoneNumberFormat.E164
-            )
-        except phonenumbers.NumberParseException:
-            self.logger.warning(LOG_UNEXPECTED_PHONE_FORMAT, phone)
-            return phone
-
-    def parse_date(self, date_str: str) -> str:
-        """
-        Parse and standardize date formats using predefined formats.
-
-        Args:
-            date_str (str): The raw date string.
-
-        Returns:
-            str: Standardized date string in YYYY-MM-DD format.
-        """
-        for fmt in self.config.get("date_formats", []):
+    def parse(
+        self,
+        email_content: Optional[str] = None,
+        document_image: Optional[Union[str, Image.Image]] = None,
+    ) -> Dict[str, Any]:
+        self.logger.info("Starting parsing process.")
+        parsed_data: Dict[str, Any] = {}
+        stages = [
+            ("NER Parsing", self._stage_ner_parsing, {"email_content": email_content}),
+            (
+                "Donut Parsing",
+                self._stage_donut_parsing,
+                {"document_image": document_image},
+            ),
+            (
+                "Comprehensive Validation",
+                self._stage_comprehensive_validation,
+                {"email_content": email_content, "parsed_data": parsed_data},
+            ),
+            (
+                "Sentiment Analysis",
+                self._stage_sentiment_analysis,
+                {"email_content": email_content, "parsed_data": parsed_data},
+            ),
+            (
+                "Post Processing",
+                self._stage_post_processing,
+                {"parsed_data": parsed_data},
+            ),
+            (
+                "JSON Validation",
+                self._stage_json_validation,
+                {"parsed_data": parsed_data},
+            ),
+        ]
+        for stage_name, stage_method, kwargs in stages:
             try:
-                date_obj = dateutil_parse(date_str, fuzzy=False)
-                standardized_date = date_obj.strftime("%Y-%m-%d")
-                self.logger.debug(LOG_PARSED_DATE, date_str, standardized_date, fmt)
-                return standardized_date
-            except (ValueError, OverflowError):
-                continue
-        # Fallback to dateutil_parse with fuzzy parsing
+                if stage_name == "Donut Parsing" and not document_image:
+                    self.logger.warning(
+                        "No document image provided for Donut parsing. Skipping this stage."
+                    )
+                    continue
+                self.logger.info("Stage: %s", stage_name)
+                timeout_seconds = self.timeouts.get(
+                    stage_name.lower().replace(" ", "_"), 60
+                )
+                with ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(stage_method, **kwargs)
+                    stage_result = future.result(timeout=timeout_seconds)
+                if isinstance(stage_result, dict) and stage_result:
+                    parsed_data = self.merge_parsed_data(parsed_data, stage_result)
+            except ConcurrentTimeoutError:
+                self.logger.error(
+                    "Stage '%s' timed out after %d seconds.",
+                    stage_name,
+                    timeout_seconds,
+                )
+                self.recover_from_failure(stage_name)
+            except Exception as e:
+                self.logger.error(
+                    "Error in stage '%s': %s", stage_name, e, exc_info=True
+                )
+        self.logger.info("Parsing process completed.")
+        return parsed_data
+
+    def _stage_ner_parsing(self, email_content: Optional[str] = None) -> Dict[str, Any]:
+        if not email_content:
+            self.logger.warning("No email content provided for NER Parsing.")
+            return {}
+        self.logger.debug("Executing NER Parsing stage.")
         try:
-            date_obj = dateutil_parse(date_str, fuzzy=True)
-            standardized_date = date_obj.strftime("%Y-%m-%d")
-            self.logger.debug(LOG_PARSED_DATE, date_str, standardized_date, "dateutil")
-            return standardized_date
-        except ValueError:
-            self.logger.warning(LOG_FAILED_DATE_PARSE, date_str)
-            return date_str
+            self._lazy_load_ner()
+            if self.ner_pipeline is None:
+                self.logger.warning(
+                    "NER pipeline is not available. Skipping NER Parsing."
+                )
+                return {}
+            return self.ner_parsing(email_content)
+        except Exception as e:
+            self.logger.error("Error during NER Parsing stage: %s", e, exc_info=True)
+            return {}
 
-    def parse_boolean(self, value: str) -> Optional[bool]:
-        """
-        Parse boolean values.
+    def _stage_donut_parsing(
+        self, document_image: Optional[Union[str, Image.Image]] = None
+    ) -> Dict[str, Any]:
+        if not document_image:
+            self.logger.warning("No document image provided for Donut Parsing.")
+            return {}
+        self.logger.debug("Executing Donut Parsing stage.")
+        try:
+            self._lazy_load_donut()
+            if self.donut_model is None or self.donut_processor is None:
+                self.logger.warning(
+                    "Donut model or processor is not available. Skipping Donut Parsing."
+                )
+                return {}
+            return self.donut_parsing(document_image)
+        except Exception as e:
+            self.logger.error("Error during Donut Parsing stage: %s", e, exc_info=True)
+            return {}
 
-        Args:
-            value (str): The raw boolean string.
+    def _stage_comprehensive_validation(
+        self,
+        email_content: Optional[str] = None,
+        parsed_data: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        if not email_content or not parsed_data:
+            self.logger.warning(
+                "Insufficient data for Comprehensive Validation. Skipping this stage."
+            )
+            return
+        self.logger.debug("Executing Comprehensive Validation stage.")
+        try:
+            self._stage_validation_internal(email_content, parsed_data)
+            self._stage_schema_validation_internal(parsed_data)
+        except Exception as e:
+            self.logger.error(
+                "Error during Comprehensive Validation stage: %s", e, exc_info=True
+            )
 
-        Returns:
-            bool or None: Parsed boolean value or None if unknown.
-        """
-        value = value.lower()
-        if value in self.config.get("boolean_values", {}).get("positive", []):
-            return True
-        elif value in self.config.get("boolean_values", {}).get("negative", []):
-            return False
+    def _stage_sentiment_analysis(
+        self,
+        email_content: Optional[str] = None,
+        parsed_data: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        if not email_content or not parsed_data:
+            self.logger.warning(
+                "Insufficient data for Sentiment Analysis. Skipping this stage."
+            )
+            return
+        self.logger.debug("Executing Sentiment Analysis stage.")
+        try:
+            self._stage_sentiment_analysis_internal(email_content, parsed_data)
+        except Exception as e:
+            self.logger.error(
+                "Error during Sentiment Analysis stage: %s", e, exc_info=True
+            )
+
+    def _stage_post_processing(
+        self, parsed_data: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        if not parsed_data:
+            self.logger.warning(
+                "No parsed data available for Post Processing. Skipping this stage."
+            )
+            return {}
+        self.logger.debug("Executing Post Processing stage.")
+        try:
+            return self._stage_post_processing_internal(parsed_data)
+        except Exception as e:
+            self.logger.error(
+                "Error during Post Processing stage: %s", e, exc_info=True
+            )
+            return parsed_data
+
+    def _stage_json_validation(
+        self, parsed_data: Optional[Dict[str, Any]] = None
+    ) -> None:
+        if not parsed_data:
+            self.logger.warning(
+                "No parsed data available for JSON Validation. Skipping this stage."
+            )
+            return
+        self.logger.debug("Executing JSON Validation stage.")
+        try:
+            self._stage_json_validation_internal(parsed_data)
+        except Exception as e:
+            self.logger.error(
+                "Error during JSON Validation stage: %s", e, exc_info=True
+            )
+
+    def ner_parsing(self, email_content: str) -> Dict[str, Any]:
+        try:
+            self.logger.debug("Starting NER pipeline.")
+            entities = self.ner_pipeline(email_content)
+            extracted_entities: Dict[str, Any] = {}
+            for entity in entities:
+                if self.is_relevant_entity(entity, email_content):
+                    section, field = self.map_entity_to_field(entity, email_content)
+                    if section and field:
+                        extracted_entities.setdefault(section, {}).setdefault(
+                            field, []
+                        ).append(entity.get("word").strip())
+                        self.logger.debug(
+                            "Extracted entity '%s' mapped to %s - %s",
+                            entity.get("word"),
+                            section,
+                            field,
+                        )
+            return extracted_entities
+        except Exception as e:
+            self.logger.error("Error during NER parsing: %s", e, exc_info=True)
+            return {}
+
+    def is_relevant_entity(self, entity, email_content) -> bool:
+        label = entity.get("entity_group")
+        text = entity.get("word")
+        if label == "PER":
+            patterns = [
+                r"insured",
+                r"adjuster",
+                r"handler",
+                r"public adjuster",
+            ]
+        elif label == "ORG":
+            patterns = [
+                r"insurance company",
+                r"claims adjuster",
+            ]
+        elif label in ["LOC", "GPE"]:
+            patterns = [
+                r"loss location",
+                r"property",
+                r"address",
+            ]
+        elif label in ["DATE", "EVENT"]:
+            patterns = [
+                r"loss",
+                r"incident",
+                r"damage",
+            ]
+        elif label in ["PHONE", "EMAIL"]:
+            patterns = []
         else:
-            self.logger.warning("Unknown boolean value '%s'. Setting to None.", value)
+            patterns = []
+        for pattern in patterns:
+            if re.search(pattern, email_content, re.IGNORECASE):
+                return True
+        return False
+
+    def map_entity_to_field(self, entity, email_content) -> (Optional[str], Optional[str]):
+        label = entity.get("entity_group")
+        text = entity.get("word")
+        if label == "PER":
+            if re.search(r"insured", email_content, re.IGNORECASE):
+                return "Insured Information", "Name"
+            elif re.search(r"adjuster", email_content, re.IGNORECASE):
+                return "Adjuster Information", "Adjuster Name"
+            elif re.search(r"handler", email_content, re.IGNORECASE):
+                return "Requesting Party", "Handler"
+            elif re.search(r"public adjuster", email_content, re.IGNORECASE):
+                return "Insured Information", "Public Adjuster"
+        elif label == "ORG":
+            if re.search(r"insurance company", email_content, re.IGNORECASE):
+                return "Requesting Party", "Insurance Company"
+            elif re.search(r"claims adjuster", email_content, re.IGNORECASE):
+                return "Adjuster Information", "Job Title"
+        elif label in ["LOC", "GPE"]:
+            if re.search(r"loss location", email_content, re.IGNORECASE):
+                return "Insured Information", "Loss Address"
+            elif re.search(r"address", email_content, re.IGNORECASE):
+                return "Adjuster Information", "Address"
+        elif label in ["DATE", "EVENT"]:
+            if re.search(r"loss", email_content, re.IGNORECASE):
+                return "Assignment Information", "Date of Loss/Occurrence"
+            elif re.search(r"incident", email_content, re.IGNORECASE):
+                return "Assignment Information", "Date of Loss/Occurrence"
+            elif re.search(r"damage", email_content, re.IGNORECASE):
+                return "Assignment Information", "Cause of loss"
+        elif label == "PHONE":
+            if re.search(r"contact number", email_content, re.IGNORECASE):
+                return "Insured Information", "Contact #"
+            elif re.search(r"adjuster phone", email_content, re.IGNORECASE):
+                return "Adjuster Information", "Adjuster Phone Number"
+        elif label == "EMAIL":
+            return "Adjuster Information", "Adjuster Email"
+        return None, None
+
+    def donut_parsing(self, document_image: Union[str, Image.Image]) -> Dict[str, Any]:
+        try:
+            self.logger.debug("Starting Donut parsing.")
+            if isinstance(document_image, str):
+                document_image = Image.open(document_image).convert("RGB")
+                self.logger.debug("Loaded image from path.")
+            elif isinstance(document_image, Image.Image):
+                pass
+            else:
+                self.logger.warning(
+                    "Invalid document_image type: %s. Skipping Donut parsing.",
+                    type(document_image),
+                )
+                return {}
+            encoding = self.donut_processor(document_image, return_tensors="pt")
+            pixel_values = encoding.pixel_values.to(self.device)
+            task_prompt = "<s_cord-v2>"
+            decoder_input_ids = self.donut_processor.tokenizer(
+                task_prompt, add_special_tokens=False, return_tensors="pt"
+            ).input_ids.to(self.device)
+            self.logger.debug("Generating output from Donut model.")
+            outputs = self.donut_model.generate(
+                pixel_values=pixel_values,
+                decoder_input_ids=decoder_input_ids,
+                max_length=self.donut_model.config.max_position_embeddings,
+                pad_token_id=self.donut_processor.tokenizer.pad_token_id,
+                eos_token_id=self.donut_processor.tokenizer.eos_token_id,
+                use_cache=True,
+            )
+            self.logger.debug("Decoding Donut model output.")
+            sequence = self.donut_processor.batch_decode(
+                outputs, skip_special_tokens=True
+            )[0]
+            sequence = sequence.replace(
+                self.donut_processor.tokenizer.eos_token, ""
+            ).replace(self.donut_processor.tokenizer.pad_token, "")
+            json_data = self.donut_processor.token2json(sequence)
+            mapped_data = self.map_donut_output_to_schema(json_data)
+            self.logger.debug("Donut Parsing Result: %s", mapped_data)
+            return mapped_data
+        except Exception as e:
+            self.logger.error("Error during Donut parsing: %s", e, exc_info=True)
+            return {}
+
+    def map_donut_output_to_schema(self, donut_json: Dict[str, Any]) -> Dict[str, Any]:
+        mapped_data: Dict[str, Any] = {}
+        try:
+            field_mapping = {
+                "policy_number": ("Adjuster Information", "Policy #"),
+                "claim_number": ("Requesting Party", "Carrier Claim Number"),
+                "insured_name": ("Insured Information", "Name"),
+                "loss_address": ("Insured Information", "Loss Address"),
+                "adjuster_name": ("Adjuster Information", "Adjuster Name"),
+                "adjuster_phone": ("Adjuster Information", "Adjuster Phone Number"),
+                "adjuster_email": ("Adjuster Information", "Adjuster Email"),
+                "date_of_loss": ("Assignment Information", "Date of Loss/Occurrence"),
+                "cause_of_loss": ("Assignment Information", "Cause of loss"),
+                "loss_description": ("Assignment Information", "Loss Description"),
+                "inspection_type": ("Assignment Information", "Inspection type"),
+                "repair_progress": ("Assignment Information", "Repair or Mitigation Progress"),
+                "residence_occupied": ("Assignment Information", "Residence Occupied During Loss"),
+                "someone_home": ("Assignment Information", "Was Someone home at time of damage"),
+                "type": ("Assignment Information", "Type"),
+                "additional_instructions": ("Additional details/Special Instructions", "Details"),
+                "attachments": ("Attachment(s)", "Files"),
+                "owner_tenant": ("Insured Information", "Is the insured an Owner or a Tenant of the loss location?"),
+            }
+            for item in donut_json.get("form", []):
+                field_name = item.get("name")
+                field_value = item.get("value")
+                if field_name in field_mapping:
+                    section, qb_field = field_mapping[field_name]
+                    if field_name in ["residence_occupied", "someone_home"]:
+                        field_value = field_value.lower() == "yes"
+                    mapped_data.setdefault(section, {}).setdefault(qb_field, []).append(
+                        field_value
+                    )
+                    self.logger.debug(
+                        "Mapped Donut field '%s' to '%s - %s' with value '%s'",
+                        field_name,
+                        section,
+                        qb_field,
+                        field_value,
+                    )
+            return mapped_data
+        except Exception as e:
+            self.logger.error(
+                "Error during mapping Donut output to schema: %s", e, exc_info=True
+            )
+            return {}
+
+    def _stage_validation_internal(self, email_content: str, parsed_data: Dict[str, Any]):
+        self.logger.debug("Starting validation parsing.")
+        inconsistencies = []
+        try:
+            for section, fields in parsed_data.items():
+                for field, value in fields.items():
+                    if isinstance(value, list) and value:
+                        value = value[0]
+                    if isinstance(value, str) and value != "N/A":
+                        if value.lower() not in email_content.lower():
+                            inconsistencies.append(
+                                f"Inconsistency in {section} - {field}: '{value}' not found in email content"
+                            )
+            required_fields = [
+                ("Requesting Party", "Insurance Company"),
+                ("Requesting Party", "Handler"),
+                ("Requesting Party", "Carrier Claim Number"),
+                ("Insured Information", "Name"),
+                ("Insured Information", "Contact #"),
+                ("Insured Information", "Loss Address"),
+                ("Insured Information", "Public Adjuster"),
+                ("Insured Information", "Is the insured an Owner or a Tenant of the loss location?"),
+                ("Adjuster Information", "Adjuster Name"),
+                ("Adjuster Information", "Adjuster Phone Number"),
+                ("Adjuster Information", "Adjuster Email"),
+                ("Adjuster Information", "Job Title"),
+                ("Adjuster Information", "Policy #"),
+                ("Assignment Information", "Date of Loss/Occurrence"),
+                ("Assignment Information", "Cause of loss"),
+                ("Assignment Information", "Loss Description"),
+                ("Assignment Information", "Residence Occupied During Loss"),
+                ("Assignment Information", "Was Someone home at time of damage"),
+                ("Assignment Information", "Repair or Mitigation Progress"),
+                ("Assignment Information", "Type"),
+                ("Assignment Information", "Inspection type"),
+            ]
+            for section, field in required_fields:
+                if not parsed_data.get(section, {}).get(field):
+                    inconsistencies.append(
+                        f"Missing required field: {section} - {field}"
+                    )
+            if inconsistencies:
+                parsed_data["validation_issues"] = (
+                    parsed_data.get("validation_issues", []) + inconsistencies
+                )
+                self.logger.warning("Validation issues found: %s", inconsistencies)
+            else:
+                self.logger.info("Validation parsing completed successfully.")
+
+            parsed_data = self.validate_with_bart(parsed_data, email_content)
+        except Exception as e:
+            self.logger.error("Error during Validation Parsing stage: %s", e, exc_info=True)
+
+    def _stage_schema_validation_internal(self, parsed_data: Dict[str, Any]):
+        self.logger.debug("Starting schema validation.")
+        missing_fields: List[str] = []
+        inconsistent_fields: List[str] = []
+        validation_errors: List[str] = []
+        try:
+            for section, fields in QUICKBASE_SCHEMA.items():
+                if section in [
+                    "Entities",
+                    "TransformerEntities",
+                    "missing_fields",
+                    "inconsistent_fields",
+                    "user_notifications",
+                    "validation_issues",
+                ]:
+                    continue
+                for field, rules in fields.items():
+                    value = parsed_data.get(section, {}).get(field)
+                    is_valid, error_msg = self._validate_against_schema(
+                        section, field, value
+                    )
+                    if not is_valid:
+                        validation_errors.append(error_msg)
+                        continue
+                    if value and value != ["N/A"]:
+                        known_values = self.config.get("known_values", {}).get(
+                            field, []
+                        )
+                        if known_values:
+                            best_match = max(
+                                known_values,
+                                key=lambda x: fuzz.partial_ratio(
+                                    x.lower(), value[0].lower()
+                                ),
+                                default=None,
+                            )
+                            if best_match and fuzz.partial_ratio(
+                                best_match.lower(), value[0].lower()
+                            ) >= self.config.get("fuzzy_threshold", 90):
+                                parsed_data[section][field] = [best_match]
+                                self.logger.debug(
+                                    "Updated %s in %s with best match: %s",
+                                    field,
+                                    section,
+                                    best_match,
+                                )
+                            else:
+                                inconsistent_fields.append(f"{section} -> {field}")
+                                self.logger.debug(
+                                    "Inconsistent field: %s -> %s with value %s",
+                                    section,
+                                    field,
+                                    value,
+                                )
+                    else:
+                        if rules.get("required", False):
+                            missing_fields.append(f"{section} -> {field}")
+                            self.logger.debug("Missing field: %s -> %s", section, field)
+            if missing_fields:
+                parsed_data["missing_fields"] = (
+                    parsed_data.get("missing_fields", []) + missing_fields
+                )
+                self.logger.info("Missing fields identified: %s", missing_fields)
+            if inconsistent_fields:
+                parsed_data["inconsistent_fields"] = (
+                    parsed_data.get("inconsistent_fields", []) + inconsistent_fields
+                )
+                self.logger.info(
+                    "Inconsistent fields identified: %s", inconsistent_fields
+                )
+            if validation_errors:
+                parsed_data["validation_issues"] = (
+                    parsed_data.get("validation_issues", []) + validation_errors
+                )
+                self.logger.warning("Validation errors found: %s", validation_errors)
+        except Exception as e:
+            self.logger.error("Error during schema validation: %s", e, exc_info=True)
+            parsed_data["validation_issues"] = parsed_data.get(
+                "validation_issues", []
+            ) + [str(e)]
+
+    def _stage_sentiment_analysis_internal(self, email_content: str, parsed_data: Dict[str, Any]):
+        try:
+            self.logger.debug("Starting Sentiment Analysis pipeline.")
+            if self.sentiment_pipeline is None:
+                self.logger.warning(
+                    "Sentiment Analysis pipeline is not available. Skipping Sentiment Analysis."
+                )
+                return
+            sentiment = self.sentiment_pipeline(email_content)
+            if sentiment:
+                sentiment_score = sentiment[0].get("score", 0)
+                sentiment_label = sentiment[0].get("label", "Neutral")
+                parsed_data["sentiment"] = {
+                    "label": sentiment_label,
+                    "score": sentiment_score,
+                }
+                self.logger.debug(
+                    "Sentiment Analysis Result: %s", parsed_data["sentiment"]
+                )
+        except Exception as e:
+            self.logger.error(
+                "Error during Sentiment Analysis inference: %s", e, exc_info=True
+            )
+
+    def validate_with_bart(self, parsed_data: Dict[str, Any], original_email: str) -> Dict[str, Any]:
+        if not self.validation_pipeline:
+            self.logger.error("Validation pipeline is not initialized.")
+            return parsed_data
+
+        self.logger.info("Starting BART validation.")
+
+        validation_prompts = {
+            "Requesting Party": f"""\
+Please validate the following section and provide suggestions for missing or incorrect fields in JSON format.
+
+Section: Requesting Party
+Parsed Data: {json.dumps(parsed_data.get('Requesting Party', {}), indent=2)}
+Email Content: {original_email}
+
+Provide your suggestions within the following JSON structure, enclosed between <BEGIN JSON> and <END JSON>:
+
+<BEGIN JSON>
+{{
+    "suggestions": {{
+        "Insurance Company": "Ensure the company name is spelled correctly.",
+        "Handler": "Provide contact information if missing.",
+        "Carrier Claim Number": "Verify the format of the claim number."
+    }}
+}}
+<END JSON>
+""",
+            "Insured Information": f"""\
+Please validate the following section and provide suggestions for missing or incorrect fields in JSON format.
+
+Section: Insured Information
+Parsed Data: {json.dumps(parsed_data.get('Insured Information', {}), indent=2)}
+Email Content: {original_email}
+
+Provide your suggestions within the following JSON structure, enclosed between <BEGIN JSON> and <END JSON>:
+
+<BEGIN JSON>
+{{
+    "suggestions": {{
+        "Name": "Ensure the insured's name is complete and correctly spelled.",
+        "Contact #": "Verify the contact number format.",
+        "Loss Address": "Confirm the completeness of the loss address.",
+        "Public Adjuster": "Provide contact details if missing.",
+        "Is the insured an Owner or a Tenant of the loss location?": "Confirm the ownership status."
+    }}
+}}
+<END JSON>
+""",
+            "Adjuster Information": f"""\
+Please validate the following section and provide suggestions for missing or incorrect fields in JSON format.
+
+Section: Adjuster Information
+Parsed Data: {json.dumps(parsed_data.get('Adjuster Information', {}), indent=2)}
+Email Content: {original_email}
+
+Provide your suggestions within the following JSON structure, enclosed between <BEGIN JSON> and <END JSON>:
+
+<BEGIN JSON>
+{{
+    "suggestions": {{
+        "Adjuster Name": "Ensure the adjuster's name is correctly spelled.",
+        "Adjuster Phone Number": "Verify the phone number format.",
+        "Adjuster Email": "Confirm the email format is valid.",
+        "Job Title": "Provide the adjuster's job title if missing.",
+        "Address": "Ensure the address is complete and correctly formatted.",
+        "Policy #": "Check if the policy number follows the required pattern."
+    }}
+}}
+<END JSON>
+""",
+            "Assignment Information": f"""\
+Please validate the following section and provide suggestions for missing or incorrect fields in JSON format.
+
+Section: Assignment Information
+Parsed Data: {json.dumps(parsed_data.get('Assignment Information', {}), indent=2)}
+Email Content: {original_email}
+
+Provide your suggestions within the following JSON structure, enclosed between <BEGIN JSON> and <END JSON>:
+
+<BEGIN JSON>
+{{
+    "suggestions": {{
+        "Date of Loss/Occurrence": "Ensure the date follows the YYYY-MM-DD format.",
+        "Cause of loss": "Specify the exact cause of the loss.",
+        "Facts of Loss": "Provide detailed facts related to the loss.",
+        "Loss Description": "Ensure the description is comprehensive.",
+        "Residence Occupied During Loss": "Confirm whether the residence was occupied.",
+        "Was Someone home at time of damage": "Specify if someone was present during the damage.",
+        "Repair or Mitigation Progress": "Update the current status of repairs or mitigation.",
+        "Type": "Clarify the type of loss or damage.",
+        "Inspection type": "Specify the type of inspection conducted."
+    }}
+}}
+<END JSON>
+""",
+            "Assignment Type": f"""\
+Please validate the following section and provide suggestions for missing or incorrect fields in JSON format.
+
+Section: Assignment Type
+Parsed Data: {json.dumps(parsed_data.get('Assignment Type', {}), indent=2)}
+Email Content: {original_email}
+
+Provide your suggestions within the following JSON structure, enclosed between <BEGIN JSON> and <END JSON>:
+
+<BEGIN JSON>
+{{
+    "suggestions": {{
+        "Wind": "Confirm if wind-related damage is applicable.",
+        "Structural": "Verify if structural damage is present.",
+        "Hail": "Check for any hail-related issues.",
+        "Foundation": "Ensure foundation damage is assessed.",
+        "Other": "Provide details for any other types of damage."
+    }}
+}}
+<END JSON>
+""",
+            "Additional details/Special Instructions": f"""\
+Please validate the following section and provide suggestions for missing or incorrect fields in JSON format.
+
+Section: Additional details/Special Instructions
+Parsed Data: {json.dumps(parsed_data.get('Additional details/Special Instructions', {}), indent=2)}
+Email Content: {original_email}
+
+Provide your suggestions within the following JSON structure, enclosed between <BEGIN JSON> and <END JSON>:
+
+<BEGIN JSON>
+{{
+    "suggestions": {{
+        "Additional details/Special Instructions": "Ensure all special instructions are clearly stated."
+    }}
+}}
+<END JSON>
+""",
+            "Attachment(s)": f"""\
+Please validate the following section and provide suggestions for missing or incorrect fields in JSON format.
+
+Section: Attachment(s)
+Parsed Data: {json.dumps(parsed_data.get('Attachment(s)', {}), indent=2)}
+Email Content: {original_email}
+
+Provide your suggestions within the following JSON structure, enclosed between <BEGIN JSON> and <END JSON>:
+
+<BEGIN JSON>
+{{
+    "suggestions": {{
+        "Attachment(s)": "Verify that all mentioned attachments are included and accessible."
+    }}
+}}
+<END JSON>
+""",
+        }
+
+        validation_results = {}
+        for section, prompt in validation_prompts.items():
+            try:
+                self.logger.debug(f"Generating BART response for section: {section}")
+                self.logger.debug(f"Prompt for section '{section}':\n{prompt}")
+                output = self.validation_pipeline(prompt, max_length=300, num_return_sequences=1)
+                generated_text = output[0]['generated_text'].strip()
+                self.logger.debug(f"Raw BART response for {section}:\n{generated_text}")
+
+                json_str = self.extract_json(generated_text)
+                if json_str:
+                    suggestions = json.loads(json_str)
+                    validation_results[section] = suggestions.get("suggestions", {})
+                    self.logger.debug(f"Extracted JSON for {section}: {suggestions.get('suggestions', {})}")
+                else:
+                    validation_results[section] = {"validation_issue": generated_text}
+                    self.logger.warning(f"BART response for {section} is not valid JSON.")
+            except Exception as e:
+                self.logger.error(f"Error during BART validation for section '{section}': {e}", exc_info=True)
+                validation_results[section] = {"validation_issue": "Validation Failed"}
+
+        for section, result in validation_results.items():
+            if "validation_issue" in result:
+                parsed_data.setdefault("validation_issues", []).append(f"{section}: {result['validation_issue']}")
+            else:
+                for field, suggestion in result.items():
+                    parsed_data.setdefault("validation_issues", []).append(f"{section} -> {field}: {suggestion}")
+                    self.logger.info(f"BART suggests reviewing '{field}' in section '{section}': {suggestion}")
+
+        self.logger.info("BART validation completed.")
+        return parsed_data
+
+    def extract_json(self, text: str) -> Optional[str]:
+        try:
+            start_delimiter = '<BEGIN JSON>'
+            end_delimiter = '<END JSON>'
+            json_start = text.find(start_delimiter)
+            json_end = text.find(end_delimiter)
+            if json_start == -1 or json_end == -1:
+                return None
+            json_content = text[
+                json_start + len(start_delimiter):json_end
+            ].strip()
+            json.loads(json_content)
+            return json_content
+        except json.JSONDecodeError:
+            self.logger.warning("Failed to decode JSON from BART response.")
+            return None
+        except Exception as e:
+            self.logger.error(f"Unexpected error during JSON extraction: {e}", exc_info=True)
             return None
 
-    def fallback_to_rule_based_parser(self, email_content: str) -> Dict[str, Any]:
-        """
-        Fallback mechanism to use RuleBasedParser if hybrid parsing fails.
-
-        Args:
-            email_content (str): The raw email content.
-
-        Returns:
-            dict: Parsed data from RuleBasedParser or default data.
-        """
-        self.logger.info(LOG_FALLBACK)
+    def merge_parsed_data(
+        self, original_data: Dict[str, Any], new_data: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        merger = DataMerger(self.logger)
         try:
-            rule_based_parser = RuleBasedParser(config=self.config)  # Pass config if needed
-            return rule_based_parser.parse(email_content)
+            if not isinstance(original_data, dict):
+                raise ValueError(
+                    f"original_data must be dict, got {type(original_data)}"
+                )
+            if not isinstance(new_data, dict):
+                raise ValueError(f"new_data must be dict, got {type(new_data)}")
+            result = deepcopy(original_data)
+            for section, fields in new_data.items():
+                try:
+                    schema_config = QUICKBASE_SCHEMA.get(section, {})
+                    if section in QUICKBASE_SCHEMA:
+                        if section not in result:
+                            result[section] = {}
+                            merger.changes.append(
+                                MergeChange(
+                                    section=section,
+                                    field=None,
+                                    old_value=None,
+                                    new_value={},
+                                    change_type="create",
+                                )
+                            )
+                        if isinstance(fields, dict):
+                            for field, value in fields.items():
+                                field_config = schema_config.get(field, {})
+                                old_value = result[section].get(field, ["N/A"])
+                                new_value = merger.merge_field_values(
+                                    old_value, value, field_config
+                                )
+                                if old_value != new_value:
+                                    result[section][field] = new_value
+                                    merger.changes.append(
+                                        MergeChange(
+                                            section=section,
+                                            field=field,
+                                            old_value=old_value,
+                                            new_value=new_value,
+                                            change_type="update",
+                                        )
+                                    )
+                        elif isinstance(fields, list):
+                            old_value = result.get(section, [])
+                            new_value = merger.merge_field_values(old_value, fields)
+                            if old_value != new_value:
+                                result[section] = new_value
+                                merger.changes.append(
+                                    MergeChange(
+                                        section=section,
+                                        field=None,
+                                        old_value=old_value,
+                                        new_value=new_value,
+                                        change_type="update",
+                                    )
+                                )
+                        else:
+                            old_value = result.get(section)
+                            result[section] = fields
+                            merger.changes.append(
+                                MergeChange(
+                                    section=section,
+                                    field=None,
+                                    old_value=old_value,
+                                    new_value=fields,
+                                    change_type="update",
+                                )
+                            )
+                    else:
+                        self.logger.debug(f"Handling non-schema section: {section}")
+                        if isinstance(fields, list):
+                            if section not in result:
+                                result[section] = []
+                                merger.changes.append(
+                                    MergeChange(
+                                        section=section,
+                                        field=None,
+                                        old_value=None,
+                                        new_value=[],
+                                        change_type="create",
+                                    )
+                                )
+                            old_value = result[section]
+                            new_items = [x for x in fields if x not in result[section]]
+                            result[section].extend(new_items)
+                            if new_items:
+                                merger.changes.append(
+                                    MergeChange(
+                                        section=section,
+                                        field=None,
+                                        old_value=old_value,
+                                        new_value=result[section],
+                                        change_type="update",
+                                    )
+                                )
+                        else:
+                            old_value = result.get(section)
+                            result[section] = fields
+                            merger.changes.append(
+                                MergeChange(
+                                    section=section,
+                                    field=None,
+                                    old_value=old_value,
+                                    new_value=fields,
+                                    change_type="update",
+                                )
+                            )
+                except Exception as section_error:
+                    self.logger.error(
+                        f"Error processing section '{section}': {str(section_error)}",
+                        exc_info=True,
+                    )
+                    continue
+            if merger.changes:
+                self.logger.debug(
+                    "Merge changes:\n"
+                    + "\n".join(f"- {change}" for change in merger.changes)
+                )
+            self._validate_merged_data(result)
+            return result
+        except ValueError as ve:
+            self.logger.error(f"Invalid input data: {str(ve)}")
+            raise
         except Exception as e:
-            self.logger.error("Fallback to RuleBasedParser failed: %s", e)
-            return self.default_section_data()
+            self.logger.error(f"Error in merge_parsed_data: {str(e)}", exc_info=True)
+            return original_data
 
-    def _extract_section_data(self, section: str, text: str) -> Tuple[Dict[str, Any], Dict[str, float]]:
-        """
-        Generic method to extract data from a section using patterns.
+    def _validate_merged_data(self, data: Dict[str, Any]) -> None:
+        required_sections = {
+            "Requesting Party": {
+                "Insurance Company": list,
+                "Handler": list,
+                "Carrier Claim Number": list,
+            },
+            "Insured Information": {
+                "Name": list,
+                "Contact #": list,
+                "Loss Address": list,
+                "Public Adjuster": list,
+                "Is the insured an Owner or a Tenant of the loss location?": list,
+            },
+            "Adjuster Information": {
+                "Adjuster Name": list,
+                "Adjuster Phone Number": list,
+                "Adjuster Email": list,
+                "Job Title": list,
+                "Address": list,
+                "Policy #": list,
+            },
+            "Assignment Information": {
+                "Date of Loss/Occurrence": list,
+                "Cause of loss": list,
+                "Facts of Loss": list,
+                "Loss Description": list,
+                "Residence Occupied During Loss": list,
+                "Was Someone home at time of damage": list,
+                "Repair or Mitigation Progress": list,
+                "Type": list,
+                "Inspection type": list,
+            },
+            "Assignment Type": {
+                "Wind": list,
+                "Structural": list,
+                "Hail": list,
+                "Foundation": list,
+                "Other": list,
+            },
+        }
+        try:
+            for section, fields in required_sections.items():
+                if section not in data:
+                    self.logger.warning(f"Missing required section: {section}")
+                    data[section] = {}
+                for field, field_type in fields.items():
+                    if field not in data[section]:
+                        if field_type == list:
+                            data[section][field] = ["N/A"]
+                        else:
+                            data[section][field] = "N/A"
+                    if field_type == list and not isinstance(
+                        data[section][field], list
+                    ):
+                        data[section][field] = [data[section][field]]
+            if "Assignment Type" in data and "Other" in data["Assignment Type"]:
+                other_data = data["Assignment Type"]["Other"]
+                if isinstance(other_data, list) and other_data:
+                    if isinstance(other_data[0], dict):
+                        if not all(
+                            key in other_data[0] for key in ["Checked", "Details"]
+                        ):
+                            self.logger.warning(
+                                "Invalid Other field format in Assignment Type"
+                            )
+                            data["Assignment Type"]["Other"] = [
+                                {"Checked": False, "Details": "N/A"}
+                            ]
+                    else:
+                        data["Assignment Type"]["Other"] = [
+                            {"Checked": False, "Details": "N/A"}
+                        ]
+            for section in [
+                "Entities",
+                "TransformerEntities",
+                "Additional details/Special Instructions",
+                "Attachment(s)",
+            ]:
+                if section not in data:
+                    data[section] = {} if section != "Attachment(s)" else []
+            self.logger.debug("Data validation completed successfully")
+        except Exception as e:
+            self.logger.error(f"Error during data validation: {str(e)}", exc_info=True)
+            raise ValueError(f"Data validation failed: {str(e)}")
 
-        Args:
-            section (str): The section name.
-            text (str): The content of the section.
+    def merge_parsed_data(
+        self, original_data: Dict[str, Any], new_data: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        merger = DataMerger(self.logger)
+        try:
+            if not isinstance(original_data, dict):
+                raise ValueError(
+                    f"original_data must be dict, got {type(original_data)}"
+                )
+            if not isinstance(new_data, dict):
+                raise ValueError(f"new_data must be dict, got {type(new_data)}")
+            result = deepcopy(original_data)
+            for section, fields in new_data.items():
+                try:
+                    schema_config = QUICKBASE_SCHEMA.get(section, {})
+                    if section in QUICKBASE_SCHEMA:
+                        if section not in result:
+                            result[section] = {}
+                            merger.changes.append(
+                                MergeChange(
+                                    section=section,
+                                    field=None,
+                                    old_value=None,
+                                    new_value={},
+                                    change_type="create",
+                                )
+                            )
+                        if isinstance(fields, dict):
+                            for field, value in fields.items():
+                                field_config = schema_config.get(field, {})
+                                old_value = result[section].get(field, ["N/A"])
+                                new_value = merger.merge_field_values(
+                                    old_value, value, field_config
+                                )
+                                if old_value != new_value:
+                                    result[section][field] = new_value
+                                    merger.changes.append(
+                                        MergeChange(
+                                            section=section,
+                                            field=field,
+                                            old_value=old_value,
+                                            new_value=new_value,
+                                            change_type="update",
+                                        )
+                                    )
+                        elif isinstance(fields, list):
+                            old_value = result.get(section, [])
+                            new_value = merger.merge_field_values(old_value, fields)
+                            if old_value != new_value:
+                                result[section] = new_value
+                                merger.changes.append(
+                                    MergeChange(
+                                        section=section,
+                                        field=None,
+                                        old_value=old_value,
+                                        new_value=new_value,
+                                        change_type="update",
+                                    )
+                                )
+                        else:
+                            old_value = result.get(section)
+                            result[section] = fields
+                            merger.changes.append(
+                                MergeChange(
+                                    section=section,
+                                    field=None,
+                                    old_value=old_value,
+                                    new_value=fields,
+                                    change_type="update",
+                                )
+                            )
+                    else:
+                        self.logger.debug(f"Handling non-schema section: {section}")
+                        if isinstance(fields, list):
+                            if section not in result:
+                                result[section] = []
+                                merger.changes.append(
+                                    MergeChange(
+                                        section=section,
+                                        field=None,
+                                        old_value=None,
+                                        new_value=[],
+                                        change_type="create",
+                                    )
+                                )
+                            old_value = result[section]
+                            new_items = [x for x in fields if x not in result[section]]
+                            result[section].extend(new_items)
+                            if new_items:
+                                merger.changes.append(
+                                    MergeChange(
+                                        section=section,
+                                        field=None,
+                                        old_value=old_value,
+                                        new_value=result[section],
+                                        change_type="update",
+                                    )
+                                )
+                        else:
+                            old_value = result.get(section)
+                            result[section] = fields
+                            merger.changes.append(
+                                MergeChange(
+                                    section=section,
+                                    field=None,
+                                    old_value=old_value,
+                                    new_value=fields,
+                                    change_type="update",
+                                )
+                            )
+                except Exception as section_error:
+                    self.logger.error(
+                        f"Error processing section '{section}': {str(section_error)}",
+                        exc_info=True,
+                    )
+                    continue
+            if merger.changes:
+                self.logger.debug(
+                    "Merge changes:\n"
+                    + "\n".join(f"- {change}" for change in merger.changes)
+                )
+            self._validate_merged_data(result)
+            return result
+        except ValueError as ve:
+            self.logger.error(f"Invalid input data: {str(ve)}")
+            raise
+        except Exception as e:
+            self.logger.error(f"Error in merge_parsed_data: {str(e)}", exc_info=True)
+            return original_data
 
-        Returns:
-            tuple: Extracted data and match confidences.
-        """
-        data = {}
-        match_confidences = {}
-        for key, pattern in self.patterns.get(section, {}).items():
-            match = pattern.search(text)
-            if match:
-                if key == FIELD_DATE_OF_LOSS:
-                    value = self.parse_date(match.group(1).strip())
-                elif key in [
-                    FIELD_RESIDENCE_OCCUPIED,
-                    FIELD_SOMEONE_HOME,
-                ]:
-                    value = self.parse_boolean(match.group(1).strip())
-                elif key == FIELD_OWNER_OR_TENANT:
-                    value = match.group(1).strip()
-                elif key == FIELD_ADJUSTER_PHONE_NUMBER:
-                    value = self.format_phone_number(match.group(1).strip())
-                elif key == FIELD_ADJUSTER_EMAIL:
-                    value = match.group(1).strip().lower()
-                elif key == FIELD_OTHER:
-                    checked = bool(match.group(1).strip().lower() == 'x')
-                    details = match.group(2).strip() if match.lastindex >= 2 else "N/A"
-                    value = {"Checked": checked, "Details": details if details else "N/A"}
-                else:
-                    value = match.group(1).strip()
-                if key == FIELD_OTHER:
-                    data[f"{key}_Checked"] = value["Checked"]
-                    data[f"{key}_Details"] = value["Details"]
-                else:
-                    data[key] = value if value else "N/A"
-                match_confidences[key] = 1.0  # Full confidence for regex match
-                self.logger.debug(LOG_FOUND, key, value)
+    def _validate_merged_data(self, data: Dict[str, Any]) -> None:
+        required_sections = {
+            "Requesting Party": {
+                "Insurance Company": list,
+                "Handler": list,
+                "Carrier Claim Number": list,
+            },
+            "Insured Information": {
+                "Name": list,
+                "Contact #": list,
+                "Loss Address": list,
+                "Public Adjuster": list,
+                "Is the insured an Owner or a Tenant of the loss location?": list,
+            },
+            "Adjuster Information": {
+                "Adjuster Name": list,
+                "Adjuster Phone Number": list,
+                "Adjuster Email": list,
+                "Job Title": list,
+                "Address": list,
+                "Policy #": list,
+            },
+            "Assignment Information": {
+                "Date of Loss/Occurrence": list,
+                "Cause of loss": list,
+                "Facts of Loss": list,
+                "Loss Description": list,
+                "Residence Occupied During Loss": list,
+                "Was Someone home at time of damage": list,
+                "Repair or Mitigation Progress": list,
+                "Type": list,
+                "Inspection type": list,
+            },
+            "Assignment Type": {
+                "Wind": list,
+                "Structural": list,
+                "Hail": list,
+                "Foundation": list,
+                "Other": list,
+            },
+        }
+        try:
+            for section, fields in required_sections.items():
+                if section not in data:
+                    self.logger.warning(f"Missing required section: {section}")
+                    data[section] = {}
+                for field, field_type in fields.items():
+                    if field not in data[section]:
+                        if field_type == list:
+                            data[section][field] = ["N/A"]
+                        else:
+                            data[section][field] = "N/A"
+                    if field_type == list and not isinstance(
+                        data[section][field], list
+                    ):
+                        data[section][field] = [data[section][field]]
+            if "Assignment Type" in data and "Other" in data["Assignment Type"]:
+                other_data = data["Assignment Type"]["Other"]
+                if isinstance(other_data, list) and other_data:
+                    if isinstance(other_data[0], dict):
+                        if not all(
+                            key in other_data[0] for key in ["Checked", "Details"]
+                        ):
+                            self.logger.warning(
+                                "Invalid Other field format in Assignment Type"
+                            )
+                            data["Assignment Type"]["Other"] = [
+                                {"Checked": False, "Details": "N/A"}
+                            ]
+                    else:
+                        data["Assignment Type"]["Other"] = [
+                            {"Checked": False, "Details": "N/A"}
+                        ]
+            for section in [
+                "Entities",
+                "TransformerEntities",
+                "Additional details/Special Instructions",
+                "Attachment(s)",
+            ]:
+                if section not in data:
+                    data[section] = {} if section != "Attachment(s)" else []
+            self.logger.debug("Data validation completed successfully")
+        except Exception as e:
+            self.logger.error(f"Error during data validation: {str(e)}", exc_info=True)
+            raise ValueError(f"Data validation failed: {str(e)}")
+
+    def merge_parsed_data(
+        self, original_data: Dict[str, Any], new_data: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        merger = DataMerger(self.logger)
+        try:
+            if not isinstance(original_data, dict):
+                raise ValueError(
+                    f"original_data must be dict, got {type(original_data)}"
+                )
+            if not isinstance(new_data, dict):
+                raise ValueError(f"new_data must be dict, got {type(new_data)}")
+            result = deepcopy(original_data)
+            for section, fields in new_data.items():
+                try:
+                    schema_config = QUICKBASE_SCHEMA.get(section, {})
+                    if section in QUICKBASE_SCHEMA:
+                        if section not in result:
+                            result[section] = {}
+                            merger.changes.append(
+                                MergeChange(
+                                    section=section,
+                                    field=None,
+                                    old_value=None,
+                                    new_value={},
+                                    change_type="create",
+                                )
+                            )
+                        if isinstance(fields, dict):
+                            for field, value in fields.items():
+                                field_config = schema_config.get(field, {})
+                                old_value = result[section].get(field, ["N/A"])
+                                new_value = merger.merge_field_values(
+                                    old_value, value, field_config
+                                )
+                                if old_value != new_value:
+                                    result[section][field] = new_value
+                                    merger.changes.append(
+                                        MergeChange(
+                                            section=section,
+                                            field=field,
+                                            old_value=old_value,
+                                            new_value=new_value,
+                                            change_type="update",
+                                        )
+                                    )
+                        elif isinstance(fields, list):
+                            old_value = result.get(section, [])
+                            new_value = merger.merge_field_values(old_value, fields)
+                            if old_value != new_value:
+                                result[section] = new_value
+                                merger.changes.append(
+                                    MergeChange(
+                                        section=section,
+                                        field=None,
+                                        old_value=old_value,
+                                        new_value=new_value,
+                                        change_type="update",
+                                    )
+                                )
+                        else:
+                            old_value = result.get(section)
+                            result[section] = fields
+                            merger.changes.append(
+                                MergeChange(
+                                    section=section,
+                                    field=None,
+                                    old_value=old_value,
+                                    new_value=fields,
+                                    change_type="update",
+                                )
+                            )
+                    else:
+                        self.logger.debug(f"Handling non-schema section: {section}")
+                        if isinstance(fields, list):
+                            if section not in result:
+                                result[section] = []
+                                merger.changes.append(
+                                    MergeChange(
+                                        section=section,
+                                        field=None,
+                                        old_value=None,
+                                        new_value=[],
+                                        change_type="create",
+                                    )
+                                )
+                            old_value = result[section]
+                            new_items = [x for x in fields if x not in result[section]]
+                            result[section].extend(new_items)
+                            if new_items:
+                                merger.changes.append(
+                                    MergeChange(
+                                        section=section,
+                                        field=None,
+                                        old_value=old_value,
+                                        new_value=result[section],
+                                        change_type="update",
+                                    )
+                                )
+                        else:
+                            old_value = result.get(section)
+                            result[section] = fields
+                            merger.changes.append(
+                                MergeChange(
+                                    section=section,
+                                    field=None,
+                                    old_value=old_value,
+                                    new_value=fields,
+                                    change_type="update",
+                                )
+                            )
+                except Exception as section_error:
+                    self.logger.error(
+                        f"Error processing section '{section}': {str(section_error)}",
+                        exc_info=True,
+                    )
+                    continue
+            if merger.changes:
+                self.logger.debug(
+                    "Merge changes:\n"
+                    + "\n".join(f"- {change}" for change in merger.changes)
+                )
+            self._validate_merged_data(result)
+            return result
+        except ValueError as ve:
+            self.logger.error(f"Invalid input data: {str(ve)}")
+            raise
+        except Exception as e:
+            self.logger.error(f"Error in merge_parsed_data: {str(e)}", exc_info=True)
+            return original_data
+
+    def validate_input(
+        self,
+        email_content: Optional[str] = None,
+        document_image: Optional[Union[str, Image.Image]] = None,
+    ) -> bool:
+        if not email_content and not document_image:
+            self.logger.error("No input provided")
+            return False
+        if document_image and not isinstance(document_image, (str, Image.Image)):
+            self.logger.error("Invalid document_image type: %s", type(document_image))
+            return False
+        if email_content and not isinstance(email_content, str):
+            self.logger.error("Invalid email_content type: %s", type(email_content))
+            return False
+        return True
+
+    def _validate_against_schema(self, section: str, field: str, value: Any) -> (bool, str):
+        # Placeholder for actual schema validation logic
+        # Implement actual validation based on QUICKBASE_SCHEMA
+        # For now, assume all validations pass
+        return True, ""
+
+    def _stage_post_processing_internal(
+        self, parsed_data: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        self.logger.debug("Starting post-processing of parsed data.")
+        skip_sections = [
+            "TransformerEntities",
+            "Entities",
+            "missing_fields",
+            "inconsistent_fields",
+            "user_notifications",
+            "validation_issues",
+        ]
+        try:
+            for section, fields in parsed_data.items():
+                if section in skip_sections or not isinstance(fields, dict):
+                    continue
+                for field, value_list in fields.items():
+                    if not isinstance(value_list, list):
+                        continue
+                    for idx, value in enumerate(value_list):
+                        if "Date" in field or "Loss/Occurrence" in field:
+                            formatted_date = self.format_date(value)
+                            parsed_data[section][field][idx] = formatted_date
+                            self.logger.debug(
+                                "Formatted date for %s: %s", field, formatted_date
+                            )
+                        if any(
+                            phone_term in field
+                            for phone_term in ["Contact #", "Phone Number", "Phone"]
+                        ):
+                            formatted_phone = self.format_phone_number(value)
+                            parsed_data[section][field][idx] = formatted_phone
+                            self.logger.debug(
+                                "Formatted phone number for %s: %s",
+                                field,
+                                formatted_phone,
+                            )
+                        if field in [
+                            "Wind",
+                            "Structural",
+                            "Hail",
+                            "Foundation",
+                            "Residence Occupied During Loss",
+                            "Was Someone home at time of damage",
+                        ]:
+                            if isinstance(value, str):
+                                parsed_data[section][field][idx] = (
+                                    value.lower() in ["yes", "true"]
+                                )
+                        if "Address" in field:
+                            formatted_address = self._format_address(value)
+                            parsed_data[section][field][idx] = formatted_address
+                            self.logger.debug(
+                                "Formatted address for %s: %s", field, formatted_address
+                            )
+                        if "Email" in field:
+                            formatted_email = value.lower().strip()
+                            parsed_data[section][field][idx] = formatted_email
+                            self.logger.debug(
+                                "Formatted email for %s: %s", field, formatted_email
+                            )
+                        if isinstance(value, str):
+                            cleaned_text = self._clean_text(value)
+                            parsed_data[section][field][idx] = cleaned_text
+            attachments = parsed_data.get("Attachment(s)", {}).get("Files", [])
+            if attachments:
+                if not self.verify_attachments(
+                    attachments, parsed_data.get("email_content", "")
+                ):
+                    parsed_data.setdefault("user_notifications", []).append(
+                        "Attachments mentioned in email may be missing or inconsistent."
+                    )
+            return parsed_data
+        except Exception as e:
+            self.logger.error("Error during post-processing: %s", e, exc_info=True)
+            return parsed_data
+
+    def _stage_json_validation_internal(self, parsed_data: Dict[str, Any]):
+        self.logger.debug("Starting JSON validation.")
+        try:
+            is_valid, error_message = validate_json(parsed_data)
+            if is_valid:
+                self.logger.info("JSON validation passed.")
             else:
-                # Handle alternative patterns
-                alt_pattern = self.additional_patterns.get(section, {}).get(key)
-                if alt_pattern:
-                    alt_match = alt_pattern.search(text)
-                    if alt_match:
-                        value = alt_match.group(1).strip()
-                        if key == FIELD_DATE_OF_LOSS and value != "N/A":
-                            value = self.parse_date(value)
-                        elif key == FIELD_OWNER_OR_TENANT and value != "N/A":
-                            value = value.strip()
-                        elif key in [
-                            FIELD_RESIDENCE_OCCUPIED,
-                            FIELD_SOMEONE_HOME,
-                        ] and value != "N/A":
-                            value = self.parse_boolean(value)
-                        elif key == FIELD_ADJUSTER_PHONE_NUMBER and value != "N/A":
-                            value = self.format_phone_number(value)
-                        elif key == FIELD_ADJUSTER_EMAIL and value != "N/A":
-                            value = value.lower()
-                        elif key == FIELD_OTHER and value != "N/A":
-                            parts = value.split(None, 1)
-                            checked = bool(parts[0].strip().lower() == 'x') if parts else False
-                            details = parts[1].strip() if len(parts) > 1 else "N/A"
-                            value = {"Checked": checked, "Details": details if details else "N/A"}
-                        else:
-                            value = value if value else "N/A"
+                self.logger.error("JSON validation failed: %s", error_message)
+                parsed_data["validation_issues"] = parsed_data.get(
+                    "validation_issues", []
+                ) + [error_message]
+        except Exception as e:
+            self.logger.error("Error during JSON validation: %s", e, exc_info=True)
+            parsed_data["validation_issues"] = parsed_data.get(
+                "validation_issues", []
+            ) + [str(e)]
 
-                        if key == FIELD_OTHER and value != "N/A":
-                            data[f"{key}_Checked"] = value["Checked"]
-                            data[f"{key}_Details"] = value["Details"]
-                        else:
-                            data[key] = value
+    def format_date(self, date_string: str) -> str:
+        if date_string == "N/A":
+            return date_string
+        self.logger.debug("Formatting date string: %s", date_string)
+        try:
+            parsed_date = dateutil.parser.parse(date_string)
+            formatted_date = parsed_date.strftime("%Y-%m-%d")
+            self.logger.debug("Formatted date: %s", formatted_date)
+            return formatted_date
+        except (ValueError, TypeError) as e:
+            self.logger.warning("Failed to parse date '%s': %s", date_string, e)
+            return "N/A"
 
-                        if value != "N/A":
-                            match_confidences[key] = 1.0
-                            self.logger.debug(LOG_FOUND_ADDITIONAL, key, value)
-                        else:
-                            data[key] = "N/A"
-                            match_confidences[key] = 0.0
-                            self.logger.debug(LOG_NOT_FOUND, key)
-                    else:
-                        if key == FIELD_OTHER:
-                            data[f"{key}_Checked"] = False
-                            data[f"{key}_Details"] = "N/A"
-                        else:
-                            data[key] = "N/A"
-                        match_confidences[key] = 0.0
-                        self.logger.debug(LOG_NOT_FOUND, key)
-                else:
-                    if key == FIELD_OTHER:
-                        data[f"{key}_Checked"] = False
-                        data[f"{key}_Details"] = "N/A"
-                    else:
-                        data[key] = "N/A"
-                    match_confidences[key] = 0.0
-                    self.logger.debug(LOG_NOT_FOUND, key)
-        return data, match_confidences
+    def format_phone_number(self, phone_number: str) -> str:
+        try:
+            parsed_number = phonenumbers.parse(phone_number, "US")  # Assuming US
+            if phonenumbers.is_valid_number(parsed_number):
+                formatted_number = phonenumbers.format_number(
+                    parsed_number, phonenumbers.PhoneNumberFormat.INTERNATIONAL
+                )
+                self.logger.debug("Formatted phone number: %s", formatted_number)
+                return formatted_number
+            else:
+                self.logger.warning("Invalid phone number: %s", phone_number)
+                return "N/A"
+        except phonenumbers.NumberParseException as e:
+            self.logger.warning("Failed to parse phone number '%s': %s", phone_number, e)
+            return "N/A"
 
-    def sanitize_input(self, value: str) -> str:
-        """
-        Sanitize input value by removing unwanted characters and trimming whitespace.
+    def _clean_text(self, text: str) -> str:
+        if not isinstance(text, str):
+            return text
+        text = " ".join(text.split())
+        text = re.sub(r"_{2,}", "", text)
+        text = re.sub(r"\[cid:[^\]]+\]", "", text)
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
+        text = re.sub(r"([.!?])\1+", r"\1", text)
+        text = re.sub(r'["“”]', '"', text)  # Simplified quote normalization
+        return text.strip()
 
-        Args:
-            value (str): The input value.
+    def _format_address(self, address: str) -> str:
+        if not isinstance(address, str):
+            return address
+        address = re.sub(r"\s+", " ", address.strip())
+        address = re.sub(r"\s*,\s*", ", ", address)
+        state_pattern = r"\b([A-Za-z]{2})\b\s*(\d{5}(?:-\d{4})?)?$"
+        match = re.search(state_pattern, address)
+        if match:
+            state = match.group(1)
+            if len(state) == 2:
+                address = (
+                    address[: match.start(1)] + state.upper() + address[match.end(1) :]
+                )
+        return address
 
-        Returns:
-            str: Sanitized value.
-        """
-        return value.strip()
+    def verify_attachments(self, attachments: List[str], email_content: str) -> bool:
+        self.logger.debug("Verifying attachments: %s", attachments)
+        try:
+            mentioned_attachments = re.findall(
+                r"attached\s+([\w\s.,]+)", email_content, re.IGNORECASE
+            )
+            mentioned_attachments = [
+                att.strip()
+                for sublist in mentioned_attachments
+                for att in sublist.split(",")
+            ]
+            all_mentioned_present = all(
+                any(mention.lower() in att.lower() for att in attachments)
+                for mention in mentioned_attachments
+            )
+            count_matches = len(attachments) == len(mentioned_attachments)
+            if all_mentioned_present and count_matches:
+                self.logger.debug("All attachments verified successfully.")
+                return True
+            self.logger.warning("Discrepancy in attachments detected.")
+            return False
+        except Exception as e:
+            self.logger.error(
+                "Error during attachment verification: %s", e, exc_info=True
+            )
+            return False
 
-    def cross_field_validation(self, data: Dict[str, Any]) -> None:
-        """
-        Implement cross-field validation rules.
+    def cleanup_resources(self):
+        self.logger.info("Cleaning up resources.")
+        try:
+            if hasattr(self, "donut_model") and self.donut_model is not None:
+                self.donut_model.cpu()
+                self.logger.debug("Donut model moved to CPU.")
+            if hasattr(self, "ner_pipeline") and self.ner_pipeline is not None:
+                if hasattr(self.ner_pipeline, "model"):
+                    self.ner_pipeline.model.cpu()
+                    self.logger.debug("NER pipeline model moved to CPU.")
+            if hasattr(self, "validation_pipeline") and self.validation_pipeline is not None:
+                if hasattr(self.validation_pipeline, "model"):
+                    self.validation_pipeline.model.cpu()
+                    self.logger.debug("Validation pipeline model moved to CPU.")
+            if hasattr(self, "sentiment_pipeline") and self.sentiment_pipeline is not None:
+                if hasattr(self.sentiment_pipeline, "model"):
+                    self.sentiment_pipeline.model.cpu()
+                    self.logger.debug("Sentiment Analysis pipeline model moved to CPU.")
+        except AttributeError as ae:
+            self.logger.error(f"Attribute error during cleanup: {ae}", exc_info=True)
+        except Exception as e:
+            self.logger.error(f"Unexpected error during cleanup: {e}", exc_info=True)
+        torch.cuda.empty_cache()
+        self.logger.info("Resources cleaned up successfully.")
 
-        Args:
-            data (dict): Parsed data.
+    def recover_from_failure(self, stage: str) -> bool:
+        self.logger.warning("Attempting to recover from %s failure", stage)
+        if stage.lower().replace(" ", "_") in [
+            "ner_parsing",
+            "donut_parsing",
+            "validation_parsing",
+            "schema_validation",
+            "post_processing",
+            "json_validation",
+            "sentiment_analysis",
+        ]:
+            return self._reinitialize_models()
+        return False
 
-        Raises:
-            ValueError: If validation fails.
-        """
-        date_of_loss = data.get(FIELD_DATE_OF_LOSS)
-        if date_of_loss != "N/A":
-            try:
-                date_obj = dateutil_parse(date_of_loss)
-                if date_obj > datetime.datetime.now():
-                    raise ValueError("Date of Loss cannot be in the future.")
-            except Exception as e:
-                self.logger.warning("Invalid date format for Date of Loss: %s", e)
+    def _reinitialize_models(self) -> bool:
+        try:
+            self.logger.info("Reinitializing relevant models.")
+            # Reinitialize only the failed stage's model
+            self.init_ner()
+            self.init_donut()
+            self.init_validation_model()
+            self.init_sentiment_model()
+            health = self.health_check()
+            if health:
+                self.logger.info("Reinitialization successful.")
+                return True
+            else:
+                self.logger.error("Reinitialization failed.")
+                return False
+        except (OSError, ValueError) as e:
+            self.logger.error(
+                "Error during model reinitialization: %s", e, exc_info=True
+            )
+            return False
 
-    def output_as_json(self, data: Dict[str, Any]) -> str:
-        """
-        Output the data as a JSON string.
+    def _lazy_load_ner(self):
+        if self.ner_pipeline is None:
+            self.init_ner()
 
-        Args:
-            data (dict): Parsed data.
+    def _lazy_load_donut(self):
+        if self.donut_model is None or self.donut_processor is None:
+            self.init_donut()
 
-        Returns:
-            str: JSON string.
-        """
-        return json.dumps(data, indent=4)
+    def _lazy_load_validation_model(self):
+        if self.validation_pipeline is None:
+            self.init_validation_model()
 
-    def output_as_csv(self, data: Dict[str, Any]) -> str:
-        """
-        Output the data as a CSV string.
+    def _lazy_load_sentiment_model(self):
+        if self.sentiment_pipeline is None:
+            self.init_sentiment_model()
 
-        Args:
-            data (dict): Parsed data.
+    def __enter__(self):
+        return self
 
-        Returns:
-            str: CSV string.
-        """
-        output = io.StringIO()
-        writer = csv.DictWriter(output, fieldnames=data.keys())
-        writer.writeheader()
-        writer.writerow(data)
-        return output.getvalue()
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.cleanup_resources()
 
-    # Add additional methods as needed, following the structure above.
+    def get_performance_metrics(self) -> Dict[str, Any]:
+        return {
+            "memory_usage": self._check_memory_usage(),
+            "model_status": self.health_check(),
+            "processing_times": {
+                "ner_parsing": self.timeouts.get("ner_parsing", 30),
+                "donut_parsing": self.timeouts.get("donut_parsing", 60),
+                "validation_parsing": self.timeouts.get(
+                    "validation_parsing", 30
+                ),
+                "schema_validation": self.timeouts.get("schema_validation", 30),
+                "post_processing": self.timeouts.get("post_processing", 30),
+                "json_validation": self.timeouts.get("json_validation", 30),
+                "sentiment_analysis": self.timeouts.get("sentiment_analysis", 30),
+            },
+        }
 
-# Example usage (This should be placed outside of this file, e.g., in app.py)
-# from src.parsers.hybrid_parser import HybridParser
-# parser = HybridParser(config_path="src/parsers/parser_config.yaml")
-# with open("path_to_email.txt", "r") as file:
-#     email_content = file.read()
-# parsed_data = parser.parse(email_content)
-# print(parsed_data)
+    def _check_memory_usage(self) -> Dict[str, float]:
+        memory_info = {}
+        if torch.cuda.is_available():
+            memory_info["cuda"] = {
+                "allocated": torch.cuda.memory_allocated() / 1024**2,
+                "cached": torch.cuda.memory_reserved() / 1024**2,
+                "max_allocated": torch.cuda.max_memory_allocated() / 1024**2,
+            }
+        return memory_info
+
+    # Additional utility methods can be defined below as needed
+
+# Example Usage After Fixes
+if __name__ == "__main__":
+    parser = EnhancedParser()
+    try:
+        result = parser.parse_email(
+            email_content="example email content", document_image=None
+        )
+        print("Parsed Result:", result)
+    except Exception as e:
+        print("Error during parsing:", e)
+    finally:
+        parser.cleanup_resources()

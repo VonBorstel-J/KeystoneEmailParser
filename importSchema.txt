@@ -1,4 +1,4 @@
-importSchema.txt
+
 
 Requesting Party
 Insurance Company: 
