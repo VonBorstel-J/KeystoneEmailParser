@@ -3,15 +3,18 @@
 import os
 import io
 import time
-from threading import Thread
-from typing import Dict, Any
+from typing import Optional, Dict, Any
 import logging
+import traceback
+from datetime import datetime, timezone
+import sys
 
 import json_log_formatter
 from flask import Flask, render_template, request, jsonify, send_from_directory
 from flask_socketio import SocketIO, emit
 from dotenv import load_dotenv
 from PIL import Image
+import numpy as np  # For make_serializable function
 
 from src.parsers.parser_options import ParserOption
 from src.parsers.parser_registry import ParserRegistry
@@ -46,6 +49,47 @@ def format_schema_output(formatted_data: Dict[str, Any]) -> str:
     return '\n'.join(output)
 
 
+def make_serializable(obj):
+    """
+    Recursively converts non-serializable objects to serializable types.
+
+    Args:
+        obj: The object to convert.
+
+    Returns:
+        A JSON-serializable version of the object.
+    """
+    if isinstance(obj, np.float32):
+        logger.debug("Converting np.float32 to float.")
+        return float(obj)
+    elif isinstance(obj, np.float64):
+        logger.debug("Converting np.float64 to float.")
+        return float(obj)
+    elif isinstance(obj, np.int32):
+        logger.debug("Converting np.int32 to int.")
+        return int(obj)
+    elif isinstance(obj, np.int64):
+        logger.debug("Converting np.int64 to int.")
+        return int(obj)
+    elif isinstance(obj, dict):
+        return {k: make_serializable(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [make_serializable(element) for element in obj]
+    elif isinstance(obj, tuple):
+        return tuple(make_serializable(element) for element in obj)
+    elif isinstance(obj, set):
+        return [make_serializable(element) for element in obj]
+    elif isinstance(obj, float):
+        return obj
+    elif isinstance(obj, int):
+        return obj
+    elif isinstance(obj, str):
+        return obj
+    else:
+        logger.warning("Encountered non-serializable type: %s. Converting to string.", type(obj))
+        return str(obj)
+
+
 def background_parse(sid, parser, email_content, document_image):
     """Perform email parsing and emit progress updates to the client."""
     try:
@@ -72,16 +116,27 @@ def background_parse(sid, parser, email_content, document_image):
             # Actual parsing
             result = p.parse_email(email_content=email_content, document_image=document_image)
 
-            # Add formatted output to response
-            if 'formatted_output' in result:
-                formatted_text = format_schema_output(result['formatted_output'])
+            # Add formatted output to response if available
+            if 'email_metadata' in result:
+                formatted_text = format_schema_output(result['email_metadata'])
                 result['formatted_schema'] = formatted_text
 
-            socketio.emit('parsing_completed', {'result': result}, room=sid)
+            # Convert the result to a serializable format
+            serializable_result = make_serializable(result)
+            logger.debug("Serialized Result: %s", serializable_result)
+
+            socketio.emit('parsing_completed', {'result': serializable_result}, room=sid)
 
     except Exception as e:
         logger.error("Parsing failed: %s", e, exc_info=True)
-        socketio.emit('parsing_error', {'error': str(e)}, room=sid)
+        error_info = {
+            'taskName': None,
+            'message': f"Parsing failed: {str(e)}",
+            'time': datetime.now(timezone.utc).isoformat(),
+            'exc_info': traceback.format_exc()
+        }
+        serializable_error = make_serializable(error_info)
+        socketio.emit('parsing_error', {'error': serializable_error}, room=sid)
 
 
 @app.route("/", methods=["GET"])
@@ -106,33 +161,41 @@ def favicon():
 
 @app.route("/parse_email", methods=["POST"])
 def parse_email_route():
-    print("Request form data:", request.form)
-    print("Request files:", request.files)
     """Handle the email parsing request."""
+    # Removed print statements for cleaner production code
     email_content = request.form.get("email_content", "").strip()
     image_file = request.files.get("document_image")
-    parser_option = request.form.get("parser_option", "").strip()
+    parser_option_str = request.form.get("parser_option", "").strip()
     socket_id = request.form.get('socket_id')
-    
+
     # Validation
     if not email_content and not image_file:
         return jsonify({"error_message": "Please provide email content or document image"}), 400
 
-    if not parser_option:
+    if not parser_option_str:
         return jsonify({"error_message": "Please select a parser option."}), 400
 
     # Retrieve socket ID from form data instead of headers
-    sid = request.form.get('socket_id')
+    sid = socket_id
     if not sid:
         return jsonify({"error_message": "Socket ID not provided."}), 400
 
     logger.info("Received Socket ID: %s", sid)
 
+    # Convert parser_option_str to ParserOption Enum
     try:
-        parser = ParserRegistry.get_parser(ParserOption.ENHANCED_PARSER, socketio, sid)
+        parser_option = ParserOption(parser_option_str)
+    except ValueError:
+        return jsonify({"error_message": f"Invalid parser option: {parser_option_str}"}), 400
+
+    try:
+        parser = ParserRegistry.get_parser(parser_option, socketio, sid)
     except Exception as e:
         logger.error("Failed to initialize parser: %s", e)
         return jsonify({"error_message": "Parser initialization failed"}), 500
+
+    if parser is None:
+        return jsonify({"error_message": "Parser could not be initialized"}), 500
 
     # Process image if provided
     document_image = None
@@ -191,7 +254,7 @@ def page_not_found(e):
 if __name__ == "__main__":
     try:
         # Load configuration
-        config = Config.load()
+        config = ConfigLoader.load()
 
         host = os.getenv("HOST", "127.0.0.1")
         port = int(os.getenv("PORT", "5000"))
@@ -201,7 +264,13 @@ if __name__ == "__main__":
             os.makedirs(static_dir)
             logger.info("Created 'static' directory at %s", static_dir)
 
+        # Initialize parsers
+        ParserRegistry.initialize_parsers(config)
+
         socketio.run(app, host=host, port=port, debug=True, use_reloader=False)
     except Exception as e:
         logger.critical("Failed to start the Flask application: %s", e, exc_info=True)
-        raise e
+        # Perform any necessary cleanup
+        ParserRegistry.cleanup_parsers()
+        # Exit with a non-zero status code
+        sys.exit(1)

@@ -16,26 +16,45 @@ def post_process_parsed_data(parsed_data: Dict[str, Any], logger: logging.Logger
     """
     try:
         logger.debug("Starting post-processing of parsed data.")
+        processed_data = {}
+        
         for section, fields in parsed_data.items():
             if isinstance(fields, dict):
+                processed_section = {}
                 for field, values in fields.items():
+                    processed_values = []
                     if isinstance(values, list):
-                        # Deduplicate values
-                        unique_values = list(set(values))
-                        parsed_data[section][field] = unique_values
-                        logger.debug(f"Deduplicated field '{field}' in section '{section}': {unique_values}")
+                        for value in values:
+                            if isinstance(value, dict) and 'value' in value:
+                                processed_value = normalize_value(value['value'], field)
+                                confidence = value.get('confidence', 1.0)
+                                processed_values.append({"value": processed_value, "confidence": confidence})
+                            else:
+                                processed_value = normalize_value(value, field)
+                                processed_values.append({"value": processed_value, "confidence": 1.0})
+                    else:
+                        processed_value = normalize_value(values, field)
+                        processed_values.append({"value": processed_value, "confidence": 1.0})
+                    
+                    processed_section[field] = processed_values
+                processed_data[section] = processed_section
+            else:
+                processed_data[section] = fields
 
-                        # Normalize data
-                        if "Date" in field or "date" in field.lower():
-                            parsed_data[section][field] = [normalize_date(v, logger) for v in unique_values]
-                        elif "Phone" in field:
-                            parsed_data[section][field] = [normalize_phone_number(v, logger) for v in unique_values]
-                        elif "Email" in field:
-                            parsed_data[section][field] = [v.lower() for v in unique_values if validate_email(v)]
         logger.debug("Post-processing completed successfully.")
+        return processed_data
     except Exception as e:
         logger.error(f"Error during post-processing: {e}", exc_info=True)
-    return parsed_data
+        return parsed_data
+
+def normalize_value(value: Any, field: str) -> Any:
+    if "date" in field.lower():
+        return normalize_date(value)
+    elif "phone" in field.lower():
+        return normalize_phone_number(value)
+    elif "email" in field.lower():
+        return value.lower() if isinstance(value, str) else value
+    return value
 
 def normalize_date(date_str: str, logger: logging.Logger) -> str:
     """

@@ -1,4 +1,4 @@
-# config/parser_config.yaml
+# config\parser_config.yaml
 
 # Directory where models will be cached
 cache_dir: ".cache"
@@ -7,134 +7,183 @@ cache_dir: ".cache"
 authentication:
   hf_token_env_var: "HF_TOKEN"  # Environment variable name for Hugging Face token
 
+data_points:
+  Requesting_Party:
+    description: "Information about the requesting party."
+    Insurance_Company:
+      description: "Name of the insurance company."
+    Handler:
+      description: "Handler's name and contact information."
+    Carrier_Claim_Number:
+      description: "Unique claim number assigned by the carrier."
+  Insured_Information:
+    Name:
+      description: "Full name of the insured individual."
+    Contact_Number:
+      description: "Contact number of the insured."
+    Loss_Address:
+      description: "Address where the loss occurred."
+    Public_Adjuster:
+      description: "Information about the public adjuster, if any."
+    Ownership_Status:
+      description: "Whether the insured is an owner or tenant of the loss location."
+  Adjuster_Information:
+    Adjuster_Name:
+      description: "Name of the adjuster."
+    Adjuster_Phone_Number:
+      description: "Phone number of the adjuster."
+    Adjuster_Email:
+      description: "Email address of the adjuster."
+    Job_Title:
+      description: "Job title of the adjuster."
+    Address:
+      description: "Address of the adjuster."
+    Policy_Number:
+      description: "Policy number associated with the claim."
+  Assignment_Information:
+    Date_of_Loss:
+      description: "Date when the loss or occurrence happened."
+    Cause_of_Loss:
+      description: "Cause behind the loss."
+    Facts_of_Loss:
+      description: "Detailed facts surrounding the loss."
+    Loss_Description:
+      description: "Description of the loss."
+    Residence_Occupied:
+      description: "Whether the residence was occupied during the loss."
+    Someone_Home:
+      description: "Whether someone was home at the time of damage."
+    Repair_Progress:
+      description: "Progress on repair or mitigation."
+    Type:
+      description: "Type of loss or claim."
+    Inspection_Type:
+      description: "Type of inspection conducted."
+  Assignment_Type:
+    Wind:
+      description: "Wind-related damage."
+    Structural:
+      description: "Structural damage."
+    Hail:
+      description: "Hail-related damage."
+    Foundation:
+      description: "Foundation-related damage."
+    Other:
+      description: "Other types of damage. Provide details if selected."
+  Additional_Details:
+    description: "Any additional details or special instructions."
+  Attachments:
+    description: "List of attachments related to the email."
+
 # Model Configurations
 models:
   ner:
-    repo_id: "dslim/bert-base-NER"          # Hugging Face repository ID for NER model
-    task: "ner"                             # Task type
-    timeout: 30                             # Timeout in seconds
-    aggregation_strategy: "simple"         # Specific to NER pipeline
+    repo_id: "mistralai/Mistral-Nemo-Instruct-2407"
+    task: "ner"
+    timeout: 30
+    aggregation_strategy: "simple"
+    quantize: true
+    device: "auto"
 
   donut:
-    device: "cuda"
+    repo_id: "naver-clova-ix/donut-base-finetuned-cord-v2"
+    task: "document"
     processor: "naver-clova-ix/donut-base-finetuned-cord-v2"
     model: "naver-clova-ix/donut-base-finetuned-cord-v2"
-    repo_id: "naver-clova-ix/donut-base-finetuned-cord-v2"  # Repository ID for Donut model
-    task: "document"                       # Task type (custom if needed)
-    timeout: 60                             # Timeout in seconds
+    device: "auto"
+    timeout: 60
+    max_length: 1024
+    quantize: true
 
   validation:
-    repo_id: "facebook/bart-large"          # Repository ID for Validation model
-    task: "text2text-generation"            # Task type
-    timeout: 30                             # Timeout in seconds
+    repo_id: "mistralai/Mistral-Nemo-Instruct-2407"  # Updated to use the Mistral model for validation purposes
+    task: "text2text-generation"
+    timeout: 30
+    max_length: 512
+    quantize: true
+    device: "auto"
 
   summarization:
-    repo_id: "facebook/bart-large-cnn"      # Repository ID for Summarization model
-    task: "summarization"                   # Task type
-    timeout: 45                             # Timeout in seconds
+    repo_id: "mistralai/Mistral-Nemo-Instruct-2407"
+    task: "summarization"
+    timeout: 45
+    max_length: 768
+    quantize: true
+    device: "auto"
+    parameters:
+      max_chunk_size: 1000          # Maximum size of text chunks
+      min_summary_length: 50        # Minimum length of generated summary
+      max_summary_length: 150       # Maximum length of generated summary
+      stride: 100                   # Overlap between chunks for context preservation
+      temperature: 0.7              # Controls randomness in generation
+      top_p: 0.9                    # Nucleus sampling parameter
+      max_retries: 3                # Maximum retry attempts for failed summarization
+      preprocessing:
+        remove_signatures: true     # Remove email signatures
+        clean_headers: true         # Clean email headers
+        normalize_whitespace: true  # Normalize whitespace and newlines
+
+  model_based_parsing:
+    repo_id: "mistralai/Mistral-Nemo-Instruct-2407"
+    task: "ner"
+    timeout: 45
+    aggregation_strategy: "simple"
+    max_length: 1024
+    quantize: true
+    device: "auto"
+
 
 # Processing Configuration
 processing:
-  batch_size: 1                            # Number of samples processed at once
-  max_length: 5126                          # Maximum length for processing
-  device: "auto"                           # Device selection ('auto', 'cuda', 'cpu')
-  fallback_to_cpu: true                    # Whether to fallback to CPU if GPU not available
+  batch_size: 2                      # Increased batch size for efficiency
+  max_length: 1024                   # Increased token length to accommodate larger inputs
+  device: "auto"                    # Device selection ('auto', 'cuda', 'cpu')
+  fallback_to_cpu: true              # Whether to fallback to CPU if GPU not available
 
 # Additional Configurations
-fuzzy_threshold: 90
+fuzzy_threshold: 90                 # Threshold for fuzzy matching (adjust as needed)
 
+# Known values for NER model to match (Claim numbers, insurance companies, etc.)
 known_values:
   Claim Number:
     - "ABC123"
     - "XYZ789"
-    - "DEF456"
-    - "GHI101"
-    - "JKL202"
-    # Add more known claim numbers as needed
   Insurance Company:
     - "State Farm"
-    - "Allstate"
     - "Geico"
-    - "Progressive"
-    - "Nationwide"
-    - "Liberty Mutual"
-    - "Farmers"
-    - "Travelers"
-    - "American Family"
-    - "USAA"
-    # Add more known insurance companies as needed
-  Handler:
-    - "John Doe"
-    - "Jane Smith"
-    - "Emily Davis"
-    - "Michael Brown"
-    - "Sarah Johnson"
-    - "David Wilson"
-    # Add more known handlers as needed
-  Adjuster Name:
-    - "Michael Brown"
-    - "Sarah Johnson"
-    - "David Wilson"
-    - "Laura Martinez"
-    - "James Anderson"
-    # Add more known adjuster names as needed
-  # Add other fields and their known values as needed
+  # Add more known fields as needed...
 
 date_formats:
   - '%m/%d/%Y'
-  - '%d/%m/%Y'
   - '%Y-%m-%d'
-  - '%B %d, %Y'
-  - '%b %d, %Y'
-  - '%d %B %Y'
-  - '%d %b %Y'
-  - '%Y/%m/%d'
-  - '%d-%m-%Y'
-  - '%Y.%m.%d'
-  - '%d.%m.%Y'
-  - '%m-%d-%Y'
-  - '%Y%m%d'
-  - '%B %-d, %Y'
-  - '%b %-d, %Y'
-  - '%Y-%m-%dT%H:%M:%S'
-  - '%Y-%m-%dT%H:%M:%S.%fZ'
+  # Add more formats as needed...
 
 boolean_values:
   positive:
     - 'yes'
-    - 'y'
     - 'true'
-    - 't'
     - '1'
-    - 'x'
-    - '[x]'
-    - '[X]'
-    - '(x)'
-    - '(X)'
   negative:
     - 'no'
-    - 'n'
     - 'false'
-    - 'f'
     - '0'
-    - '[ ]'
-    - '()'
-    - '[N/A]'
-    - '(N/A)'
 
 valid_extensions:
   - '.pdf'
   - '.docx'
-  - '.xlsx'
-  - '.zip'
   - '.png'
   - '.jpg'
-  - '.jpeg'
-  - '.gif'
-  - '.txt'
   - '.csv'
 
-url_validation:
-  use_external_library: true
+# Performance Enhancements
+enable_amp: true  # Automatic Mixed Precision to improve GPU utilization and speed
+optimize_memory: true  # Optimize memory usage to handle larger documents without performance degradation
 
-log_level: "DEBUG"
+# Logging Configuration
+logging:
+  level: "DEBUG"  # Set logging level to DEBUG for detailed output
+  handlers:
+    - "StreamHandler"
+    - "FileHandler"
+  file_path: "logs/parser.log"  # File path for log output
+  create_logs_dir_if_not_exists: true  # Create logs directory if it does not exist

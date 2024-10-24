@@ -1,98 +1,123 @@
 # src/parsers/parser_registry.py
 
 import logging
-from typing import Optional, Dict
-
+from typing import Dict, Any, Optional
 from flask_socketio import SocketIO
-from transformers import Pipeline
 
-from src.parsers.enhanced_parser import EnhancedParser  # Assuming this is still needed
+from src.parsers.enhanced_parser import EnhancedParser
 from src.parsers.parser_options import ParserOption
-from src.parsers.parser_init import (
-    init_ner,
-    init_donut,
-    init_validation_model,
-    init_summarization_model,
-    setup_logging,
-)
 from src.utils.config import Config
-from src.parsers.composite_parser import CompositeParser  # Import CompositeParser
-
 
 class ParserRegistry:
-    _parsers = {}
+    """
+    Registry for managing parser instances and their lifecycle.
+    """
+    _parsers: Dict[ParserOption, Any] = {}
+    _logger = logging.getLogger(__name__)
 
     @classmethod
-    def register_parser(cls, option: ParserOption, parser_class):
+    def initialize_parsers(cls, config_path: Optional[str] = None) -> None:
         """
-        Register a parser class with a specific parser option.
+        Initialize all parsers with configuration.
 
         Args:
-            option (ParserOption): The parser option identifier.
-            parser_class: The parser class to register.
+            config_path (Optional[str]): Path to configuration file.
         """
-        cls._parsers[option] = parser_class
+        try:
+            # Initialize configuration
+            Config.initialize(config_path)
+            
+            # Set up logging based on configuration
+            logging_config = Config.get_logging_config()
+            cls._logger.setLevel(logging_config.get("level", "DEBUG"))
+            
+            cls._logger.info("Initializing parsers with configuration.")
+            
+            # Initialize enhanced parser with configuration
+            cls._parsers[ParserOption.ENHANCED_PARSER] = EnhancedParser(
+                config=Config.get_model_config("ner")  # Pass specific model config
+            )
+            
+            # Initialize other parsers here if needed
+            
+            cls._logger.info("Parser initialization completed successfully.")
+        except Exception as e:
+            cls._logger.error(f"Failed to initialize parsers: {e}", exc_info=True)
+            raise
 
-    @staticmethod
-    def get_parser(parser_option: ParserOption, socketio: SocketIO, sid: str) -> Optional[CompositeParser]:
+    @classmethod
+    def get_parser(
+        cls, 
+        parser_option: ParserOption, 
+        socketio: Optional[SocketIO] = None, 
+        sid: Optional[str] = None
+    ) -> Any:
         """
-        Initialize and retrieve a parser based on the parser_option.
+        Get a parser instance with optional Socket.IO configuration.
 
         Args:
-            parser_option (ParserOption): The parser option identifier.
-            socketio (SocketIO): The SocketIO instance for emitting events.
-            sid (str): The session ID for the client.
+            parser_option (ParserOption): The type of parser to retrieve.
+            socketio (Optional[SocketIO]): Socket.IO instance for real-time updates.
+            sid (Optional[str]): Socket.IO session ID.
 
         Returns:
-            Optional[CompositeParser]: The initialized parser or None if initialization fails.
+            Any: The requested parser instance.
         """
-        logger = setup_logging("ParserRegistry")
-        config = Config.load()
-
-        if parser_option == ParserOption.ENHANCED_PARSER:
-            ner_pipeline = init_ner(logger, config)
-            donut_processor, donut_model = init_donut(logger, config)
-            validation_pipeline = init_validation_model(logger, config)
-            summarization_pipeline = init_summarization_model(logger, config)
-
-            # Check if all components initialized successfully
-            if not all([ner_pipeline, donut_processor, donut_model, validation_pipeline, summarization_pipeline]):
-                logger.error("One or more parser components failed to initialize.")
+        try:
+            parser = cls._parsers.get(parser_option)
+            if parser:
+                parser.socketio = socketio
+                parser.sid = sid
+                cls._logger.debug(f"Retrieved parser for option: {parser_option}")
+                return parser
+            else:
+                cls._logger.warning(f"No parser found for option: {parser_option}")
                 return None
-
-            # Initialize CompositeParser with all components
-            composite_parser = CompositeParser(
-                ner=ner_pipeline,
-                donut_processor=donut_processor,
-                donut_model=donut_model,
-                validation=validation_pipeline,
-                summarization=summarization_pipeline,
-            )
-
-            return composite_parser
-        else:
-            logger.error(f"Unknown parser option: {parser_option}")
+        except Exception as e:
+            cls._logger.error(f"Error retrieving parser: {e}", exc_info=True)
             return None
+
+    @classmethod
+    def cleanup_parsers(cls) -> None:
+        """
+        Clean up all parser instances and free resources.
+        """
+        cls._logger.info("Starting parser cleanup.")
+        try:
+            for parser_type, parser in cls._parsers.items():
+                try:
+                    if hasattr(parser, 'cleanup_resources'):
+                        parser.cleanup_resources()
+                    elif hasattr(parser, 'cleanup'):
+                        parser.cleanup()
+                    cls._logger.debug(f"Cleaned up parser: {parser_type}")
+                except Exception as e:
+                    cls._logger.error(f"Error cleaning up parser {parser_type}: {e}", exc_info=True)
+            cls._parsers.clear()
+            cls._logger.info("Parser cleanup completed.")
+        except Exception as e:
+            cls._logger.error(f"Error during parser cleanup: {e}", exc_info=True)
 
     @classmethod
     def health_check(cls) -> Dict[str, bool]:
         """
-        Perform health checks on all registered parsers.
+        Check the health status of all registered parsers.
 
         Returns:
-            Dict[str, bool]: A dictionary mapping parser options to their health status.
+            Dict[str, bool]: Health status for each parser.
         """
+        cls._logger.debug("Performing health check on all parsers.")
         health_status = {}
-        for option, parser_class in cls._parsers.items():
-            try:
-                # Instantiate a temporary parser without SocketIO and sid for health checks
-                parser_instance = parser_class(socketio=None, sid=None)
-                health_status[str(option)] = parser_instance.health_check()
-            except Exception as e:
-                # If instantiation fails, mark the parser as unhealthy
-                health_status[str(option)] = False
-        return health_status
-
-
-# Initialize and register EnhancedParser
-ParserRegistry.register_parser(ParserOption.ENHANCED_PARSER, EnhancedParser)
+        try:
+            for parser_type, parser in cls._parsers.items():
+                try:
+                    is_healthy = parser.health_check() if hasattr(parser, 'health_check') else False
+                    health_status[str(parser_type)] = is_healthy
+                    cls._logger.debug(f"Health check for {parser_type}: {'Healthy' if is_healthy else 'Unhealthy'}")
+                except Exception as e:
+                    cls._logger.error(f"Error checking health for parser {parser_type}: {e}", exc_info=True)
+                    health_status[str(parser_type)] = False
+            return health_status
+        except Exception as e:
+            cls._logger.error(f"Error during health check: {e}", exc_info=True)
+            return {str(parser_type): False for parser_type in cls._parsers}

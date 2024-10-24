@@ -4,22 +4,16 @@ from PIL import Image
 import torch
 
 def initialize_donut(logger: logging.Logger, config: Dict[str, Any]):
-    """
-    Initializes the Donut model and processor.
-
-    Args:
-        logger (logging.Logger): Logger instance.
-        config (Dict[str, Any]): Configuration dictionary.
-
-    Returns:
-        Tuple[processor, model]: Initialized Donut processor and model.
-    """
     try:
         logger.debug("Loading Donut model and processor.")
         from transformers import DonutProcessor, VisionEncoderDecoderModel
+        
         processor = DonutProcessor.from_pretrained(config['models']['donut']['repo_id'])
         model = VisionEncoderDecoderModel.from_pretrained(config['models']['donut']['repo_id'])
+        
+        # Make sure the model is moved to the correct device (CPU/GPU)
         model.to(config['processing']['device'])
+        
         logger.info("Donut model and processor initialized successfully.")
         return processor, model
     except Exception as e:
@@ -44,19 +38,17 @@ def perform_donut_parsing(document_image: Union[str, Image.Image], processor, mo
         logger.debug("Starting Donut parsing process.")
         if isinstance(document_image, str):
             image = Image.open(document_image).convert("RGB")
-        else:
+        elif isinstance(document_image, Image.Image):
             image = document_image.convert("RGB")
+        else:
+            raise ValueError("Invalid image input type")
 
-        # Advanced Image Preprocessing
         image = preprocess_image(image, logger)
-
-        # Prepare inputs
         inputs = processor(image, return_tensors="pt").to(device)
         generated_ids = model.generate(**inputs, max_length=512)
         output = processor.batch_decode(generated_ids, skip_special_tokens=True)[0]
         logger.debug(f"Donut model output: {output}")
 
-        # Parse JSON from output
         parsed_output = parse_donut_output(output, logger)
         return parsed_output
     except Exception as e:

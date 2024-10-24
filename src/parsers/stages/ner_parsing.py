@@ -1,3 +1,5 @@
+# src\parsers\stages\ner_parsing.py
+
 import logging
 from typing import Dict, Any, List
 from transformers import AutoTokenizer, AutoModelForTokenClassification

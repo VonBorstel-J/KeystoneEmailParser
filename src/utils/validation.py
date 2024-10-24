@@ -1,10 +1,60 @@
-# src/utils/validation.py
-
 import jsonschema
-from jsonschema import Draft7Validator
+from jsonschema import Draft7Validator, validators, ValidationError
+from transformers import pipeline
 import logging
+from typing import Tuple, List, Dict, Any
+import re
 
-# Define the QuickBase schema based on importSchema.txt
+logger = logging.getLogger("Validation")
+logger.setLevel(logging.DEBUG)
+handler = logging.StreamHandler()
+formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+handler.setFormatter(formatter)
+logger.addHandler(handler)
+
+def init_validation_model(logger: logging.Logger, config: Dict[str, Any], prompt_template: Optional[str] = None):
+    try:
+        logger.info("Initializing Validation Model pipeline.")
+        
+        # Load model
+        validation_pipeline = pipeline(task=config['models']['validation']['task'], 
+                                       model=config['models']['validation']['repo_id'],
+                                       tokenizer=config['models']['validation']['repo_id'],
+                                       device=0 if config['processing']['device'] == 'cuda' and torch.cuda.is_available() else -1)
+
+        # Log the prompt if provided
+        if prompt_template:
+            logger.debug(f"Using prompt template for validation: {prompt_template}")
+        
+        logger.info("Validation model initialized successfully.")
+        return validation_pipeline
+    except Exception as e:
+        logger.error(f"Failed to initialize validation model: {e}", exc_info=True)
+        return None
+
+def extend_with_default(validator_class):
+    validate_properties = validator_class.VALIDATORS["properties"]
+
+    def set_defaults(validator, properties, instance, schema):
+        for property, subschema in properties.items():
+            if "default" in subschema:
+                instance.setdefault(property, subschema["default"])
+
+        for error in validate_properties(
+            validator,
+            properties,
+            instance,
+            schema,
+        ):
+            yield error
+
+    return validators.extend(
+        validator_class,
+        {"properties": set_defaults},
+    )
+
+DefaultValidatingDraft7Validator = extend_with_default(Draft7Validator)
+
 assignment_schema = {
     "type": "object",
     "properties": {
@@ -22,6 +72,7 @@ assignment_schema = {
                 },
             },
             "required": ["Insurance Company", "Handler", "Carrier Claim Number"],
+            "additionalProperties": False,
         },
         "Insured Information": {
             "type": "object",
@@ -48,6 +99,7 @@ assignment_schema = {
                 "Public Adjuster",
                 "Is the insured an Owner or a Tenant of the loss location?",
             ],
+            "additionalProperties": False,
         },
         "Adjuster Information": {
             "type": "object",
@@ -62,7 +114,7 @@ assignment_schema = {
                 },
                 "Adjuster Email": {
                     "type": ["array", "null"],
-                    "items": {"type": "string"},
+                    "items": {"type": "string", "format": "email"},
                 },
                 "Job Title": {"type": ["array", "null"], "items": {"type": "string"}},
                 "Address": {"type": ["array", "null"], "items": {"type": "string"}},
@@ -76,14 +128,18 @@ assignment_schema = {
                 "Address",
                 "Policy #",
             ],
+            "additionalProperties": False,
+            "dependencies": {
+                "Adjuster Name": ["Adjuster Email"],
+                "Adjuster Email": ["Adjuster Name"],
+            },
         },
         "Assignment Information": {
             "type": "object",
             "properties": {
                 "Date of Loss/Occurrence": {
                     "type": ["array", "null"],
-                    "items": {"type": "string"},
-                    "format": "date",
+                    "items": {"type": "string", "format": "date"},
                 },
                 "Cause of loss": {
                     "type": ["array", "null"],
@@ -126,6 +182,7 @@ assignment_schema = {
                 "Type",
                 "Inspection type",
             ],
+            "additionalProperties": False,
         },
         "Assignment Type": {
             "type": "object",
@@ -148,6 +205,7 @@ assignment_schema = {
                 },
             },
             "required": ["Wind", "Structural", "Hail", "Foundation", "Other"],
+            "additionalProperties": False,
         },
         "Additional details/Special Instructions": {
             "type": ["array", "null"],
@@ -190,28 +248,194 @@ assignment_schema = {
         "TransformerEntities",
     ],
     "additionalProperties": False,
+    "if": {
+        "properties": {
+            "Adjuster Name": {"type": "array"},
+        },
+        "required": ["Adjuster Name"],
+    },
+    "then": {
+        "properties": {
+            "Adjuster Email": {"type": "array"},
+        },
+        "required": ["Adjuster Email"],
+    },
+    "else": {
+        "properties": {
+            "Adjuster Email": {"type": ["array", "null"]},
+        },
+    },
 }
 
-
-def validate_json(parsed_data: dict) -> (bool, str):
-    """
-    Validate the parsed data against the QuickBase schema.
-
-    Args:
-        parsed_data (dict): The parsed data to validate.
-
-    Returns:
-        tuple: (is_valid (bool), error_message (str))
-    """
-    logger = logging.getLogger("Validation")
-    validator = Draft7Validator(assignment_schema)
+def validate_schema(parsed_data: dict) -> List[str]:
+    validator = DefaultValidatingDraft7Validator(assignment_schema)
     errors = sorted(validator.iter_errors(parsed_data), key=lambda e: e.path)
+    error_messages = []
 
-    if errors:
-        error_messages = [
-            f"{'.'.join(map(str, error.path))}: {error.message}" for error in errors
-        ]
-        logger.error(f"Validation failed with errors: {error_messages}")
+    for error in errors:
+        path = ".".join([str(elem) for elem in error.path])
+        message = f"{path}: {error.message}" if path else error.message
+        error_messages.append(message)
+        logger.warning(f"Schema validation issue: {message}")
+
+    return error_messages
+
+def validate_field_formats(parsed_data: dict) -> List[str]:
+    error_messages = []
+    phone_pattern = re.compile(r"^\+?1?\d{9,15}$")
+    adjuster_info = parsed_data.get("Adjuster Information", {})
+    contact_numbers = adjuster_info.get("Adjuster Phone Number", []) or []
+    for idx, phone in enumerate(contact_numbers):
+        if not phone_pattern.match(phone):
+            message = f"Adjuster Information.Adjuster Phone Number[{idx}]: Invalid phone number format."
+            error_messages.append(message)
+            logger.warning(message)
+
+    email_pattern = re.compile(r"^[^@]+@[^@]+\.[^@]+$")
+    adjuster_emails = adjuster_info.get("Adjuster Email", []) or []
+    for idx, email in enumerate(adjuster_emails):
+        if not email_pattern.match(email):
+            message = f"Adjuster Information.Adjuster Email[{idx}]: Invalid email format."
+            error_messages.append(message)
+            logger.warning(message)
+
+    return error_messages
+
+def validate_dependencies(parsed_data: dict) -> List[str]:
+    error_messages = []
+    assignment_info = parsed_data.get("Assignment Information", {})
+    residence_occupied = assignment_info.get("Residence Occupied During Loss", [])
+    someone_home = assignment_info.get("Was Someone home at time of damage", [])
+
+    if residence_occupied and someone_home:
+        residence_occupied_value = (
+            residence_occupied[0]
+            if isinstance(residence_occupied, list)
+            else residence_occupied
+        )
+        someone_home_value = (
+            someone_home[0] if isinstance(someone_home, list) else someone_home
+        )
+
+        if residence_occupied_value is False and someone_home_value is True:
+            message = (
+                "Assignment Information.Residence Occupied During Loss is False, "
+                "but Was Someone home at time of damage is True."
+            )
+            error_messages.append(message)
+            logger.warning(message)
+
+    return error_messages
+
+def validate_json(parsed_data: dict) -> Tuple[bool, str]:
+    logger.info("Starting JSON validation against schema and additional rules.")
+    error_messages = []
+
+    schema_errors = validate_schema(parsed_data)
+    error_messages.extend(schema_errors)
+
+    field_errors = validate_field_formats(parsed_data)
+    error_messages.extend(field_errors)
+
+    dependency_errors = validate_dependencies(parsed_data)
+    error_messages.extend(dependency_errors)
+
+    required_fields = [
+        "Requesting Party",
+        "Insured Information",
+        "Adjuster Information",
+        "Assignment Information",
+        "Assignment Type",
+        "Additional details/Special Instructions",
+        "Attachment(s)",
+        "Entities",
+        "TransformerEntities",
+    ]
+    for field in required_fields:
+        if field not in parsed_data or not parsed_data[field]:
+            message = f"Missing required field: {field}"
+            error_messages.append(message)
+            logger.warning(message)
+
+    allowed_properties = set(assignment_schema.get("properties", {}).keys())
+    actual_properties = set(parsed_data.keys())
+    unexpected_properties = actual_properties - allowed_properties
+    for prop in unexpected_properties:
+        message = f"Unexpected property found: {prop}"
+        error_messages.append(message)
+        logger.warning(message)
+
+    if error_messages:
+        logger.debug(f"Validation completed with {len(error_messages)} issues.")
         return False, "\n".join(error_messages)
-    logger.debug("Validation successful. Parsed data conforms to the schema.")
+
+    logger.info("JSON validation successful. Parsed data conforms to the schema and additional rules.")
     return True, ""
+
+def sanitize_parsed_data(parsed_data: dict) -> dict:
+    def sanitize(obj):
+        if isinstance(obj, dict):
+            return {
+                k: sanitize(v) for k, v in obj.items() if v not in [None, [], {}, ""]
+            }
+        elif isinstance(obj, list):
+            return [sanitize(item) for item in obj if item not in [None, [], {}, ""]]
+        else:
+            return obj
+
+    sanitized_data = sanitize(parsed_data)
+    logger.debug("Sanitized parsed data by removing nulls and empty values.")
+    return sanitized_data
+
+def get_missing_required_fields(parsed_data: dict) -> List[str]:
+    validator = Draft7Validator(assignment_schema)
+    missing_fields = sorted(
+        error.message
+        for error in validator.iter_errors(parsed_data)
+        if error.validator == "required"
+    )
+    for field in missing_fields:
+        logger.warning(f"Missing required field: {field}")
+    return missing_fields
+
+def get_inconsistent_fields(parsed_data: dict) -> List[str]:
+    inconsistent_fields = []
+    return inconsistent_fields
+
+def collect_user_notifications(parsed_data: dict) -> List[str]:
+    notifications = []
+    if "summary" not in parsed_data:
+        notifications.append("Summary of services needed is missing.")
+        logger.info("User notification added: Summary of services needed is missing.")
+    return notifications
+
+def final_validation(parsed_data: Dict[str, Any]) -> Dict[str, Any]:
+    logger = logging.getLogger("Validation")
+    try:
+        logger.info("Performing final validation pass.")
+        is_valid, errors = validate_json(parsed_data)
+
+        validated_data = parsed_data.copy()
+        validated_data["missing_fields"] = get_missing_required_fields(parsed_data)
+        validated_data["inconsistent_fields"] = get_inconsistent_fields(parsed_data)
+        validated_data["low_confidence_fields"] = get_low_confidence_fields(parsed_data)
+        validated_data["validation_errors"] = errors.split("\n") if not is_valid else []
+
+        logger.info("Final validation completed.")
+        return validated_data
+    except Exception as e:
+        logger.error(f"Error during final validation: {e}", exc_info=True)
+        return parsed_data
+
+def get_low_confidence_fields(parsed_data: Dict[str, Any], threshold: float = 0.7) -> List[str]:
+    low_confidence_fields = []
+    for section, fields in parsed_data.items():
+        if isinstance(fields, dict):
+            for field, values in fields.items():
+                if isinstance(values, list):
+                    for value in values:
+                        if isinstance(value, dict) and 'confidence' in value:
+                            if value['confidence'] < threshold:
+                                low_confidence_fields.append(f"{section}.{field}")
+                                break
+    return low_confidence_fields
