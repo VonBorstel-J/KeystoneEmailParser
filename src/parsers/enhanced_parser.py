@@ -3,24 +3,35 @@
 import logging
 import os
 import asyncio
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as ConcurrentTimeoutError
+from concurrent.futures import (
+    ThreadPoolExecutor,
+    TimeoutError as ConcurrentTimeoutError,
+)
 from typing import Any, Dict, Optional, Union
 
 import torch
 from PIL import Image
 import psutil
-from jinja2 import Template  # Added for templating
+from jinja2 import Template
 
 from src.parsers.base_parser import BaseParser
 from src.parsers.data_merger import DataMerger
 from src.parsers.stages.post_processing import post_process_parsed_data
-from src.parsers.stages.validation_parsing import validate_internal, validate_schema_internal
+from src.parsers.stages.validation_parsing import (
+    validate_internal,
+    validate_schema_internal,
+)
 from src.parsers.stages.donut_parsing import perform_donut_parsing, initialize_donut
-from src.parsers.stages.ner_parsing import perform_ner, initialize_ner_pipeline
-from src.parsers.stages.summarization import perform_summarization, initialize_summarization_pipeline
-from src.parsers.stages.model_based_parsing import perform_model_based_parsing, initialize_model_parser
+from src.parsers.stages.summarization import (
+    perform_summarization,
+    initialize_summarization_pipeline,
+)
+from src.parsers.stages.model_based_parsing import (
+    perform_model_based_parsing,
+    initialize_model_parser,
+)
 from src.utils.config import Config
-from src.utils.validation import init_validation_model
+from src.utils.validation import init_validation_model, validate_json
 from src.utils.email_utils import parse_email
 
 # Define Constants Directly Within This File
@@ -28,6 +39,7 @@ ADJUSTER_INFORMATION: str = "Adjuster Information"
 REQUESTING_PARTY: str = "Requesting Party"
 INSURED_INFORMATION: str = "Insured Information"
 ASSIGNMENT_INFORMATION: str = "Assignment Information"
+
 
 # Custom Exceptions
 class EnhancedParserError(Exception):
@@ -47,7 +59,7 @@ class ValidationError(EnhancedParserError):
 
 
 class EnhancedParser(BaseParser):
-    REQUIRED_ENV_VARS = ['HF_TOKEN', 'TRANSFORMERS_CACHE']
+    REQUIRED_ENV_VARS = ["HF_TOKEN", "TRANSFORMERS_CACHE"]
 
     def __init__(
         self,
@@ -91,7 +103,7 @@ class EnhancedParser(BaseParser):
                 return asyncio.get_event_loop()
         except Exception as e:
             self.logger.error("Failed to initialize asyncio loop: %s", e, exc_info=True)
-            raise InitializationError(f"Asyncio loop initialization failed: {e}")
+            raise InitializationError(f"Asyncio loop initialization failed: {e}") from e
 
     def _check_environment_variables(self) -> None:
         """Verify that all required environment variables are set."""
@@ -107,7 +119,7 @@ class EnhancedParser(BaseParser):
         if not logger.handlers:
             handler = logging.StreamHandler()
             formatter = logging.Formatter(
-                '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+                "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
             )
             handler.setFormatter(formatter)
             logger.addHandler(handler)
@@ -120,37 +132,32 @@ class EnhancedParser(BaseParser):
             # Check environment variables first
             self._check_environment_variables()
 
-            # Initialize models with error handling and prompt templates
-            self.ner_pipeline = self._initialize_with_retry(
-                initialize_ner_pipeline,
-                self.logger,
-                self.config
-            )
-
+            # Initialize Donut model and processor
             self.donut_processor, self.donut_model = self._initialize_with_retry(
-                initialize_donut,
-                self.logger,
-                self.config
+                initialize_donut, self.logger, self.config
             )
 
+            # Initialize Model-Based Parser
             self.model_parser = self._initialize_with_retry(
                 initialize_model_parser,
                 self.logger,
                 self.config,
-                prompt_template=self._render_prompt('model_based_parsing')
+                prompt_template=self._render_prompt("model_based_parsing"),
             )
 
+            # Initialize Validation Pipeline
             self.validation_pipeline = self._initialize_with_retry(
                 init_validation_model,
                 self.logger,
-                prompt_template=self._render_prompt('validation')
+                prompt_template=self._render_prompt("validation"),
             )
 
+            # Initialize Summarization Pipeline
             self.summarization_pipeline = self._initialize_with_retry(
                 initialize_summarization_pipeline,
                 self.logger,
                 self.config,
-                prompt_template=self._render_prompt('summarization')
+                # Removed prompt_template to fix TypeError
             )
 
             # Initialize other components
@@ -181,12 +188,14 @@ class EnhancedParser(BaseParser):
         Returns:
             str: The rendered prompt.
         """
-        prompt_template = self.config.get('models', {}).get(model_key, {}).get('prompt_template', "")
+        prompt_template = (
+            self.config.get("models", {}).get(model_key, {}).get("prompt_template", "")
+        )
         if not prompt_template:
             return ""
 
         # Prepare the data points for the prompt
-        data_points = Config.data_points
+        data_points = Config.get_data_points()
 
         # Render the prompt using Jinja2
         template = Template(prompt_template)
@@ -196,24 +205,24 @@ class EnhancedParser(BaseParser):
 
     def _initialize_with_retry(self, init_func, *args, **kwargs) -> Any:
         """Initialize a component with retry logic."""
-        max_retries = kwargs.pop('max_retries', 3)
+        max_retries = kwargs.pop("max_retries", 3)
         for attempt in range(max_retries):
             try:
                 component = init_func(*args, **kwargs)
                 self.logger.debug(
                     "Successfully initialized %s on attempt %d.",
                     init_func.__name__,
-                    attempt + 1
+                    attempt + 1,
                 )
                 return component
-            except (ValueError, OSError) as e:
+            except (ValueError, OSError, TypeError) as e:
                 if attempt == max_retries - 1:
                     self.logger.error(
                         "Failed to initialize %s after %d attempts: %s",
                         init_func.__name__,
                         max_retries,
                         e,
-                        exc_info=True
+                        exc_info=True,
                     )
                     raise InitializationError(
                         f"Initialization failed for {init_func.__name__}: {e}"
@@ -222,20 +231,22 @@ class EnhancedParser(BaseParser):
                     "Initialization attempt %d for %s failed: %s. Retrying...",
                     attempt + 1,
                     init_func.__name__,
-                    e
+                    e,
                 )
                 torch.cuda.empty_cache()  # Clear GPU memory if available
 
     def _determine_thread_count(self) -> int:
         """Determine optimal thread count based on system resources."""
         cpu_count = psutil.cpu_count(logical=True)
-        available_memory = psutil.virtual_memory().available / (1024 * 1024 * 1024)  # GB
+        available_memory = psutil.virtual_memory().available / (
+            1024 * 1024 * 1024
+        )  # GB
 
         # Base thread count on CPU cores and available memory
         thread_count = min(
             32,  # Maximum threads
             cpu_count * 2,  # CPU-based threads
-            int(available_memory * 2)  # Memory-based threads
+            int(available_memory * 2),  # Memory-based threads
         )
 
         self.logger.debug("Determined thread count: %d", thread_count)
@@ -244,24 +255,35 @@ class EnhancedParser(BaseParser):
     def _set_timeouts(self) -> Dict[str, int]:
         """Set timeout values for different processing stages."""
         return {
-            "ner_parsing": Config.get_timeout("ner"),
-            "donut_parsing": Config.get_timeout("donut"),
-            "validation_parsing": Config.get_timeout("validation"),
-            "schema_validation": Config.get_timeout("validation"),
+            # Removed 'ner_parsing' as NER is no longer part of the pipeline
+            "donut_parsing": self.config.get("models", {})
+            .get("donut", {})
+            .get("timeout", 60),
+            "validation_parsing": self.config.get("models", {})
+            .get("validation", {})
+            .get("timeout", 30),
+            "schema_validation": self.config.get("models", {})
+            .get("validation", {})
+            .get("timeout", 30),
             "post_processing": 30,
             "json_validation": 30,
-            "summarization": Config.get_timeout("summarization"),
-            "model_based_parsing": Config.get_timeout("model_based_parsing"),
+            "summarization": self.config.get("models", {})
+            .get("summarization", {})
+            .get("timeout", 45),
+            "model_based_parsing": self.config.get("models", {})
+            .get("model_based_parsing", {})
+            .get("timeout", 45),
         }
 
-    def get_max_workers(self) -> int:
+    @property
+    def max_workers(self) -> int:
         """
-        Retrieves the maximum number of workers from the ThreadPoolExecutor.
+        Retrieves the maximum number of workers.
 
         Returns:
             int: Maximum number of worker threads.
         """
-        return self.executor._max_workers
+        return self.executor._max_workers  # Pylint warns about protected access
 
     async def parse_async(
         self,
@@ -350,7 +372,8 @@ class EnhancedParser(BaseParser):
                 self._stage_email_parsing,
                 {"email_content": email_content},
             ),
-            ("NER Parsing", self._stage_ner_parsing, {"email_content": email_content}),
+            # Removed NER Parsing stage
+            # ("NER Parsing", self._stage_ner_parsing, {"email_content": email_content}),
             (
                 "Donut Parsing",
                 self._stage_donut_parsing,
@@ -401,7 +424,7 @@ class EnhancedParser(BaseParser):
                 self.logger.error(
                     "Timeout in stage '%s': exceeded %d seconds.",
                     stage_name,
-                    timeout_seconds
+                    timeout_seconds,
                 )
                 parsed_data["validation_issues"] = parsed_data.get(
                     "validation_issues", []
@@ -409,43 +432,34 @@ class EnhancedParser(BaseParser):
                 if not self.recover_from_failure(stage_name.lower().replace(" ", "_")):
                     self.logger.warning(
                         "Failed to recover from timeout in stage '%s'. Continuing with next stage.",
-                        stage_name
+                        stage_name,
                     )
             except ParsingError as pe:
                 self.logger.error(
-                    "ParsingError in stage '%s': %s",
-                    stage_name,
-                    pe,
-                    exc_info=True
+                    "ParsingError in stage '%s': %s", stage_name, pe, exc_info=True
                 )
                 if not self.recover_from_failure(stage_name.lower().replace(" ", "_")):
                     self.logger.warning(
                         "Failed to recover from error in stage '%s'. Continuing with next stage.",
-                        stage_name
+                        stage_name,
                     )
             except ValidationError as ve:
                 self.logger.error(
-                    "ValidationError in stage '%s': %s",
-                    stage_name,
-                    ve,
-                    exc_info=True
+                    "ValidationError in stage '%s': %s", stage_name, ve, exc_info=True
                 )
                 if not self.recover_from_failure(stage_name.lower().replace(" ", "_")):
                     self.logger.warning(
                         "Failed to recover from validation error in stage '%s'. Continuing with next stage.",
-                        stage_name
+                        stage_name,
                     )
             except Exception as e:
                 self.logger.error(
-                    "Unexpected error in stage '%s': %s",
-                    stage_name,
-                    e,
-                    exc_info=True
+                    "Unexpected error in stage '%s': %s", stage_name, e, exc_info=True
                 )
                 if not self.recover_from_failure(stage_name.lower().replace(" ", "_")):
                     self.logger.warning(
                         "Failed to recover from error in stage '%s'. Continuing with next stage.",
-                        stage_name
+                        stage_name,
                     )
 
         return parsed_data
@@ -467,43 +481,11 @@ class EnhancedParser(BaseParser):
                 }
             }
         except ParsingError as pe:
-            self.logger.error(
-                "ParsingError during Email Parsing stage: %s", pe
-            )
+            self.logger.error("ParsingError during Email Parsing stage: %s", pe)
             raise
         except Exception as e:
-            self.logger.error(
-                "Error during Email Parsing stage: %s", e, exc_info=True
-            )
+            self.logger.error("Error during Email Parsing stage: %s", e, exc_info=True)
             raise ParsingError(f"Email Parsing failed: {e}") from e
-
-    def _stage_ner_parsing(self, email_content: Optional[str] = None) -> Dict[str, Any]:
-        """
-        Executes the NER Parsing stage.
-
-        Args:
-            email_content (Optional[str]): The content of the email.
-
-        Returns:
-            Dict[str, Any]: Extracted entities from NER parsing.
-        """
-        if not email_content:
-            self.logger.warning("No email content provided for NER Parsing.")
-            return {}
-        self.logger.debug("Executing NER Parsing stage.")
-        try:
-            if self.ner_pipeline is None:
-                self.logger.warning(
-                    "NER pipeline is not available. Skipping NER Parsing."
-                )
-                return {}
-            return perform_ner(email_content, self.ner_pipeline)
-        except (ValueError, OSError) as e:
-            self.logger.error("Error during NER Parsing stage: %s", e)
-            raise ParsingError(f"NER Parsing failed: {e}") from e
-        except Exception as e:
-            self.logger.error("Unexpected error during NER Parsing stage: %s", e, exc_info=True)
-            raise ParsingError(f"NER Parsing failed: {e}") from e
 
     def _stage_donut_parsing(
         self, document_image: Optional[Union[str, Image.Image]] = None
@@ -548,7 +530,9 @@ class EnhancedParser(BaseParser):
             self.logger.error("Error during Donut Parsing stage: %s", e)
             raise ParsingError(f"Donut Parsing failed: {e}") from e
         except Exception as e:
-            self.logger.error("Unexpected error during Donut Parsing stage: %s", e, exc_info=True)
+            self.logger.error(
+                "Unexpected error during Donut Parsing stage: %s", e, exc_info=True
+            )
             raise ParsingError(f"Donut Parsing failed: {e}") from e
 
     def _stage_model_based_parsing(
@@ -558,26 +542,26 @@ class EnhancedParser(BaseParser):
             self.logger.warning("No email content provided for Model-Based Parsing.")
             return {}
         try:
-            self._lazy_load_model_parser()
+            # Removed the call to self._lazy_load_model_parser()
             if self.model_parser is None:
                 self.logger.warning(
                     "Model parser is not available. Skipping Model-Based Parsing."
                 )
                 return {}
-            
+
             # Retrieve the rendered prompt
-            prompt = self._render_prompt('model_based_parsing')
+            prompt = self._render_prompt("model_based_parsing")
 
             # Pass the prompt to the model-based parser
-            return perform_model_based_parsing(prompt, self.model_parser)
+            return perform_model_based_parsing(prompt, self.model_parser, self.logger)
         except ParsingError as pe:
-            self.logger.error(
-                "ParsingError during Model-Based Parsing stage: %s", pe
-            )
+            self.logger.error("ParsingError during Model-Based Parsing stage: %s", pe)
             raise
         except Exception as e:
             self.logger.error(
-                "Unexpected error during Model-Based Parsing stage: %s", e, exc_info=True
+                "Unexpected error during Model-Based Parsing stage: %s",
+                e,
+                exc_info=True,
             )
             raise ParsingError(f"Model-Based Parsing failed: {e}") from e
 
@@ -607,14 +591,18 @@ class EnhancedParser(BaseParser):
             parsed_data = validate_schema_internal(parsed_data, self.logger)
             return parsed_data
         except (ValueError, OSError) as e:
-            self.logger.error("ValidationError during Comprehensive Validation stage: %s", e)
+            self.logger.error(
+                "ValidationError during Comprehensive Validation stage: %s", e
+            )
             parsed_data["validation_issues"] = parsed_data.get(
                 "validation_issues", []
             ) + [str(e)]
             raise ValidationError(f"Comprehensive Validation failed: {e}") from e
         except Exception as e:
             self.logger.error(
-                "Unexpected error during Comprehensive Validation stage: %s", e, exc_info=True
+                "Unexpected error during Comprehensive Validation stage: %s",
+                e,
+                exc_info=True,
             )
             parsed_data["validation_issues"] = parsed_data.get(
                 "validation_issues", []
@@ -637,15 +625,15 @@ class EnhancedParser(BaseParser):
                     "Summarization pipeline is not available. Skipping Text Summarization."
                 )
                 return
-            
+
             # Retrieve the rendered prompt
-            prompt = self._render_prompt('summarization')
+            prompt = self._render_prompt("summarization")
 
             # Pass the prompt to the summarization model
             summary = perform_summarization(
-                prompt=prompt,
-                summarization_pipeline=self.summarization_pipeline,
-                logger=self.logger,
+                prompt,
+                self.summarization_pipeline,
+                self.logger,
             )
             if summary:
                 parsed_data["summary"] = summary
@@ -796,7 +784,7 @@ class EnhancedParser(BaseParser):
                         ]
                     elif field_name == "attachments":
                         # Assuming attachments are URLs, implement validation if necessary
-                        pass  # Removed redundant assignment
+                        pass  
                     mapped_data.setdefault(section, {}).setdefault(qb_field, []).append(
                         field_value
                     )
@@ -827,13 +815,10 @@ class EnhancedParser(BaseParser):
         try:
             models_to_cleanup = [
                 (self.donut_model, "Donut model"),
-                (self.ner_pipeline, "NER pipeline"),
+                (self.donut_processor, "Donut processor"),
                 (self.validation_pipeline, "Validation pipeline"),
                 (self.summarization_pipeline, "Summarization pipeline"),
-                (
-                    self.model_parser,
-                    "Model-Based parser",
-                ),  # Add model_parser to cleanup
+                (self.model_parser, "Model-Based parser"),
             ]
 
             for model, name in models_to_cleanup:
@@ -880,9 +865,6 @@ class EnhancedParser(BaseParser):
         self.logger.warning("Attempting to recover from %s failure", stage)
 
         recoverable_stages = {
-            "ner_parsing": lambda: setattr(
-                self, "ner_pipeline", initialize_ner_pipeline(self.logger, self.config)
-            ),
             "donut_parsing": lambda: [
                 setattr(
                     self,
@@ -894,22 +876,33 @@ class EnhancedParser(BaseParser):
                 ),
             ],
             "model_based_parsing": lambda: setattr(
-                self, "model_parser", initialize_model_parser(self.logger, self.config, prompt_template=self._render_prompt('model_based_parsing'))
+                self,
+                "model_parser",
+                initialize_model_parser(
+                    self.logger,
+                    self.config,
+                    prompt_template=self._render_prompt("model_based_parsing"),
+                ),
             ),
             "validation_parsing": lambda: setattr(
                 self,
                 "validation_pipeline",
-                init_validation_model(self.logger, prompt_template=self._render_prompt('validation')),
+                init_validation_model(
+                    self.logger, prompt_template=self._render_prompt("validation")
+                ),
             ),
             "schema_validation": lambda: setattr(
                 self,
                 "validation_pipeline",
-                init_validation_model(self.logger, prompt_template=self._render_prompt('validation')),
+                init_validation_model(
+                    self.logger, prompt_template=self._render_prompt("validation")
+                ),
             ),
             "summarization": lambda: setattr(
                 self,
                 "summarization_pipeline",
-                initialize_summarization_pipeline(self.logger, self.config, prompt_template=self._render_prompt('summarization')),
+                initialize_summarization_pipeline(self.logger, self.config),
+                # Removed prompt_template
             ),
             "post_processing": None,  # Non-recoverable
             "json_validation": None,  # Non-recoverable
@@ -934,7 +927,7 @@ class EnhancedParser(BaseParser):
                         "Recovery from %s failure was unsuccessful", stage
                     )
                 return recovery_successful
-            except (ValueError, OSError) as e:
+            except (ValueError, OSError, TypeError) as e:
                 self.logger.error("Error during recovery from %s: %s", stage, e)
                 return False
             except Exception as e:
@@ -998,13 +991,10 @@ class EnhancedParser(BaseParser):
             "memory_usage": self._check_memory_usage(),
             "cpu_usage_percent": psutil.cpu_percent(interval=1),
             "model_status": self.health_check(),
-            "active_threads": self.get_max_workers(),
+            "active_threads": self.max_workers,
             "processing_times": {
-                "ner_parsing": self.timeouts.get("ner_parsing", 30),
                 "donut_parsing": self.timeouts.get("donut_parsing", 60),
-                "model_based_parsing": self.timeouts.get(
-                    "model_based_parsing", 45
-                ),  # Include processing time for model-based parsing
+                "model_based_parsing": self.timeouts.get("model_based_parsing", 45),
                 "validation_parsing": self.timeouts.get("validation_parsing", 30),
                 "schema_validation": self.timeouts.get("schema_validation", 30),
                 "post_processing": self.timeouts.get("post_processing", 30),
@@ -1038,8 +1028,9 @@ class EnhancedParser(BaseParser):
             Dict[str, bool]: Health status of each component.
         """
         health = {
-            "ner_parsing": self.ner_pipeline is not None,
-            "donut_parsing": self.donut_model is not None and self.donut_processor is not None,
+            "ner_parsing": False,  # NER is removed
+            "donut_parsing": self.donut_model is not None
+            and self.donut_processor is not None,
             "model_based_parsing": self.model_parser is not None,
             "validation_parsing": self.validation_pipeline is not None,
             "summarization": self.summarization_pipeline is not None,

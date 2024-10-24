@@ -77,14 +77,7 @@ data_points:
 
 # Model Configurations
 models:
-  ner:
-    repo_id: "mistralai/Mistral-Nemo-Instruct-2407"
-    task: "ner"
-    timeout: 30
-    aggregation_strategy: "simple"
-    quantize: true
-    device: "auto"
-
+  # Document parsing model
   donut:
     repo_id: "naver-clova-ix/donut-base-finetuned-cord-v2"
     task: "document"
@@ -95,42 +88,44 @@ models:
     max_length: 1024
     quantize: true
 
+  # LLaMA for text-based parsing, replacing NER functionality
+  model_based_parsing:
+    repo_id: "meta-llama/Llama-3.2-3B-Instruct"
+    task: "text2text-generation"
+    timeout: 45
+    max_length: 1024
+    quantize: true
+    device: "auto"
+
+  # Validation using LLaMA
   validation:
-    repo_id: "mistralai/Mistral-Nemo-Instruct-2407"  # Updated to use the Mistral model for validation purposes
+    repo_id: "meta-llama/Llama-3.2-3B-Instruct"
     task: "text2text-generation"
     timeout: 30
     max_length: 512
     quantize: true
     device: "auto"
 
+  # Summarization using LLaMA
   summarization:
-    repo_id: "mistralai/Mistral-Nemo-Instruct-2407"
+    repo_id: "meta-llama/Llama-3.2-3B-Instruct"
     task: "summarization"
     timeout: 45
     max_length: 768
     quantize: true
     device: "auto"
     parameters:
-      max_chunk_size: 1000          # Maximum size of text chunks
-      min_summary_length: 50        # Minimum length of generated summary
-      max_summary_length: 150       # Maximum length of generated summary
-      stride: 100                   # Overlap between chunks for context preservation
-      temperature: 0.7              # Controls randomness in generation
-      top_p: 0.9                    # Nucleus sampling parameter
-      max_retries: 3                # Maximum retry attempts for failed summarization
+      max_chunk_size: 1000
+      min_summary_length: 50
+      max_summary_length: 150
+      stride: 100
+      temperature: 0.7
+      top_p: 0.9
+      max_retries: 3
       preprocessing:
-        remove_signatures: true     # Remove email signatures
-        clean_headers: true         # Clean email headers
-        normalize_whitespace: true  # Normalize whitespace and newlines
-
-  model_based_parsing:
-    repo_id: "mistralai/Mistral-Nemo-Instruct-2407"
-    task: "ner"
-    timeout: 45
-    aggregation_strategy: "simple"
-    max_length: 1024
-    quantize: true
-    device: "auto"
+        remove_signatures: true
+        clean_headers: true
+        normalize_whitespace: true
 
 
 # Processing Configuration

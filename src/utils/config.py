@@ -192,6 +192,16 @@ class Config:
             List[str]: Valid file extensions.
         """
         return ConfigLoader.get("valid_extensions", [])
+    
+    @classmethod
+    def get_data_points(cls) -> Dict[str, Any]:
+        """
+        Retrieves the 'data_points' from the configuration.
+
+        Returns:
+            Dict[str, Any]: The 'data_points' configuration.
+        """
+        return ConfigLoader.get("data_points", {})
 
     @classmethod
     def get_fuzzy_threshold(cls) -> int:

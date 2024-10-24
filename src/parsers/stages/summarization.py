@@ -24,41 +24,38 @@ class SummarizationError(Exception):
     """Custom exception for summarization-related errors."""
     pass
 
-def initialize_summarization_pipeline(logger: logging.Logger, config: Dict[str, Any]) -> Optional[pipeline]:
+def initialize_summarization_pipeline(logger: logging.Logger, config: Dict[str, Any], prompt_template: Optional[str] = None) -> Optional[Any]:
     """
-    Initializes the summarization pipeline with error handling and configuration validation.
+    Initialize the summarization pipeline.
 
     Args:
         logger (logging.Logger): Logger instance.
         config (Dict[str, Any]): Configuration dictionary.
+        prompt_template (Optional[str]): Optional prompt template.
 
     Returns:
-        Optional[pipeline]: Initialized summarization pipeline or None if initialization fails.
+        Optional[Any]: The initialized summarization pipeline or None if failed.
     """
     try:
-        logger.debug("Loading Summarization model and tokenizer.")
-        model_config = config.get('models', {}).get('summarization', {})
+        logger.info("Initializing Summarization pipeline.")
         
-        if not model_config:
-            raise ValueError("Missing summarization model configuration")
+        model_id = config['summarization']['repo_id']
+        device = 0 if config['summarization']['device'] == "cuda" and torch.cuda.is_available() else -1
 
-        device = 0 if (
-            config.get('processing', {}).get('device') == 'cuda' 
-            and torch.cuda.is_available()
-        ) else -1
-
-        summarizer = pipeline(
-            task="summarization",
-            model=model_config['repo_id'],
-            tokenizer=model_config['repo_id'],
-            device=device,
-            framework='pt'
+        summarization_pipeline = pipeline(
+            task=config['summarization']['task'],
+            model=model_id,
+            tokenizer=model_id,
+            device=device
         )
-        
-        logger.info(f"Summarization pipeline initialized successfully using model: {model_config['repo_id']}")
-        return summarizer
+
+        if prompt_template:
+            logger.debug("Using prompt template for summarization: %s", prompt_template)
+
+        logger.info("Summarization pipeline initialized successfully.")
+        return summarization_pipeline
     except Exception as e:
-        log_error(logger, f"Failed to initialize Summarization pipeline: {str(e)}", e)
+        logger.error("Failed to initialize Summarization pipeline: %s", e, exc_info=True)
         return None
 
 def preprocess_text(text: str, config: Dict[str, Any]) -> str:
