@@ -8,6 +8,7 @@ from src.utils.config_loader import ConfigLoader
 
 
 class Config:
+    _config = {}  
     """
     Configuration utility class providing easy access to parser configuration settings.
     Interfaces with ConfigLoader to provide a clean API for accessing configuration values.
@@ -51,13 +52,34 @@ class Config:
             str: Device to use ('cuda' or 'cpu').
         """
         if model_name:
-            device = ConfigLoader.get(f"models.{model_name}.device", "auto")
+            device = (
+                cls._config.get("models", {}).get(model_name, {}).get("device", "auto")
+            )
         else:
-            device = ConfigLoader.get("processing.device", "auto")
+            device = cls._config.get("processing", {}).get("device", "auto")
 
+        # Always resolve 'auto' to actual device
         if device == "auto":
             return "cuda" if torch.cuda.is_available() else "cpu"
+
+        # Validate device string
+        valid_devices = {"cpu", "cuda"}
+        if device not in valid_devices:
+            return "cuda" if torch.cuda.is_available() else "cpu"
+
         return device
+
+    @classmethod
+    def _process_device_settings(cls) -> None:
+        """Processes and validates device settings for all models."""
+        # Update global device setting
+        global_device = cls.get_device()
+        cls._config["processing"]["device"] = global_device
+
+        # Update model-specific device settings
+        for model_name, model_config in cls._config.get("models", {}).items():
+            if isinstance(model_config, dict):
+                model_config["device"] = cls.get_device(model_name)
 
     @classmethod
     def should_quantize(cls, model_name: str) -> bool:
@@ -91,6 +113,7 @@ class Config:
             Optional[str]: The token if available.
         """
         import os
+
         env_var = ConfigLoader.get("authentication.hf_token_env_var", "HF_TOKEN")
         return os.getenv(env_var)
 
@@ -118,7 +141,7 @@ class Config:
         if model_name:
             return ConfigLoader.get(
                 f"models.{model_name}.batch_size",
-                ConfigLoader.get("processing.batch_size", 1)
+                ConfigLoader.get("processing.batch_size", 1),
             )
         return ConfigLoader.get("processing.batch_size", 1)
 
@@ -136,7 +159,7 @@ class Config:
         if model_name:
             return ConfigLoader.get(
                 f"models.{model_name}.max_length",
-                ConfigLoader.get("processing.max_length", 512)
+                ConfigLoader.get("processing.max_length", 512),
             )
         return ConfigLoader.get("processing.max_length", 512)
 
@@ -192,7 +215,7 @@ class Config:
             List[str]: Valid file extensions.
         """
         return ConfigLoader.get("valid_extensions", [])
-    
+
     @classmethod
     def get_data_points(cls) -> Dict[str, Any]:
         """

@@ -1,8 +1,10 @@
 # src/parsers/parser_registry.py
 
 import logging
+import os
 from typing import Dict, Any, Optional
 from flask_socketio import SocketIO
+from pathlib import Path
 
 from src.parsers.enhanced_parser import EnhancedParser
 from src.parsers.parser_options import ParserOption
@@ -18,29 +20,38 @@ class ParserRegistry:
     _logger = logging.getLogger(__name__)
 
     @classmethod
-    def initialize_parsers(cls, config: Optional[Dict[str, Any]] = None) -> None:
+    def initialize_parsers(cls, config_path: Optional[str] = None) -> None:
         """
         Initialize all parsers with configuration.
 
         Args:
-            config (Optional[Dict[str, Any]]): Configuration dictionary.
+            config_path (Optional[str]): Path to configuration file.
         """
         try:
-            # Initialize configuration if not provided
-            if config is None:
-                Config.initialize()
-                config = Config._config  # Get the full config
+            # Set cache location
+            cache_dir = str(Path("D:/AiHub"))
+            os.environ["TRANSFORMERS_CACHE"] = cache_dir
+            os.environ["HF_HOME"] = cache_dir
+
+            # Initialize configuration
+            Config.initialize(config_path)
 
             # Set up logging based on configuration
-            logging_config = config.get("logging", {})
+            logging_config = Config.get_logging_config()
             cls._logger.setLevel(logging_config.get("level", "DEBUG"))
 
             cls._logger.info("Initializing parsers with configuration.")
 
-            # Initialize enhanced parser with full configuration
-            cls._parsers[ParserOption.ENHANCED_PARSER] = EnhancedParser(config=config)
+            # Initialize enhanced parser with configuration
+            cls._parsers[ParserOption.ENHANCED_PARSER] = EnhancedParser(
+                config=Config.get_model_config("ner")  # Pass specific model config
+            )
 
             cls._logger.info("Parser initialization completed successfully.")
+
+            # Verify cache location
+            cls._logger.info(f"Using cache location: {os.getenv('TRANSFORMERS_CACHE')}")
+
         except Exception as e:
             cls._logger.error(f"Failed to initialize parsers: {e}", exc_info=True)
             raise
@@ -52,17 +63,7 @@ class ParserRegistry:
         socketio: Optional[SocketIO] = None,
         sid: Optional[str] = None,
     ) -> Any:
-        """
-        Get a parser instance with optional Socket.IO configuration.
-
-        Args:
-            parser_option (ParserOption): The type of parser to retrieve.
-            socketio (Optional[SocketIO]): Socket.IO instance for real-time updates.
-            sid (Optional[str]): Socket.IO session ID.
-
-        Returns:
-            Any: The requested parser instance.
-        """
+        """Get a parser instance with optional Socket.IO configuration."""
         try:
             parser = cls._parsers.get(parser_option)
             if parser:

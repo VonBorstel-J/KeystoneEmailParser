@@ -75,7 +75,6 @@ data_points:
   Attachments:
     description: "List of attachments related to the email."
 
-# Model Configurations
 models:
   # Document parsing model
   donut:
@@ -83,37 +82,48 @@ models:
     task: "document"
     processor: "naver-clova-ix/donut-base-finetuned-cord-v2"
     model: "naver-clova-ix/donut-base-finetuned-cord-v2"
-    device: "auto"
+    device: "auto"  # Will try GPU first
     timeout: 60
     max_length: 1024
     quantize: true
+    required_memory_gb: 4.0
 
-  # LLaMA for text-based parsing, replacing NER functionality
+  # Llama model configurations
   model_based_parsing:
-    repo_id: "meta-llama/Llama-3.2-3B-Instruct"
+    repo_id: "nvidia/Llama-3.1-Nemotron-70B-Instruct-HF"
     task: "text2text-generation"
     timeout: 45
     max_length: 1024
     quantize: true
     device: "auto"
+    required_memory_gb: 35.0
+    rope_scaling:
+      type: "dynamic"
+      factor: 8.0
 
-  # Validation using LLaMA
   validation:
-    repo_id: "meta-llama/Llama-3.2-3B-Instruct"
+    repo_id: "nvidia/Llama-3.1-Nemotron-70B-Instruct-HF"
     task: "text2text-generation"
     timeout: 30
     max_length: 512
     quantize: true
     device: "auto"
+    required_memory_gb: 35.0
+    rope_scaling:
+      type: "dynamic"
+      factor: 8.0
 
-  # Summarization using LLaMA
   summarization:
-    repo_id: "meta-llama/Llama-3.2-3B-Instruct"
-    task: "summarization"
+    repo_id: "nvidia/Llama-3.1-Nemotron-70B-Instruct-HF"
+    task: "text2text-generation"
     timeout: 45
     max_length: 768
     quantize: true
     device: "auto"
+    required_memory_gb: 35.0
+    rope_scaling:
+      type: "dynamic"
+      factor: 8.0
     parameters:
       max_chunk_size: 1000
       min_summary_length: 50
@@ -127,13 +137,14 @@ models:
         clean_headers: true
         normalize_whitespace: true
 
-
-# Processing Configuration
 processing:
-  batch_size: 2                      # Increased batch size for efficiency
-  max_length: 1024                   # Increased token length to accommodate larger inputs
-  device: "auto"                    # Device selection ('auto', 'cuda', 'cpu')
-  fallback_to_cpu: true              # Whether to fallback to CPU if GPU not available
+  batch_size: 2
+  max_length: 1024
+  device: "auto"
+  fallback_to_cpu: true
+  memory_optimization:
+    enabled: true
+    gpu_memory_fraction: 0.9  # This mofo will use up to 90% of available GPU memory
 
 # Additional Configurations
 fuzzy_threshold: 90                 # Threshold for fuzzy matching (adjust as needed)

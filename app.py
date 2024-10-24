@@ -3,6 +3,9 @@
 import os
 import io
 import time
+from pathlib import Path
+os.environ["TRANSFORMERS_CACHE"] = str(Path("D:/AiHub"))
+os.environ["HF_HOME"] = str(Path("D:/AiHub"))
 from typing import Optional, Dict, Any
 import logging
 import traceback
@@ -21,8 +24,14 @@ from src.parsers.parser_registry import ParserRegistry
 from src.utils.config_loader import ConfigLoader
 from src.utils.config import Config
 
+print(f"Using cache location: {os.getenv('TRANSFORMERS_CACHE')}")
+if torch.cuda.is_available():
+    print(f"CUDA available: {torch.cuda.get_device_name(0)}")
+
+
 # Load environment variables from .env file
 load_dotenv()
+
 
 app = Flask(__name__)
 
