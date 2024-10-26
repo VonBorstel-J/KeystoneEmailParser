@@ -1,5 +1,3 @@
-# src/parsers/data_merger.py
-
 from typing import Any, Dict, List, Optional, Set
 import logging
 from dataclasses import dataclass

@@ -1,5 +1,3 @@
-# src/parsers/stages/validation_parsing.py
-
 from src.utils.config import Config
 from jsonschema import Draft7Validator, validators
 from typing import Optional, Tuple, List, Dict, Any

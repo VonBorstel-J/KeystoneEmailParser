@@ -1,5 +1,3 @@
-# src/email_parsing.py
-
 from src.parsers.parser_registry import ParserRegistry
 from src.parsers.parser_options import ParserOption
 from src.utils.validation import validate_json
@@ -12,7 +10,7 @@ class EmailParser:
     """
 
     def __init__(self):
-        pass  # Initialization logic if needed
+        self.parser_instance = None
 
     def parse_email(self, email_content: str, parser_option: ParserOption, socketio, sid) -> Dict[str, Any]:
         """
@@ -30,10 +28,8 @@ class EmailParser:
         if not isinstance(parser_option, ParserOption):
             raise TypeError("parser_option must be an instance of ParserOption Enum.")
 
-        parser_instance = ParserRegistry.get_parser(
-            parser_option, socketio=socketio, sid=sid
-        )
-        parsed_data = parser_instance.parse(email_content)
+        self.parser_instance = ParserRegistry.get_parser(parser_option, socketio=socketio, sid=sid)
+        parsed_data = self.parser_instance.parse(email_content)
 
         # Validate the parsed data against a JSON schema
         is_valid, error_message = validate_json(parsed_data)

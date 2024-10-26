@@ -23,7 +23,7 @@ from src.parsers.enhanced_parser import EnhancedParser
 from src.parsers.parser_options import ParserOption
 from src.parsers.parser_registry import ParserRegistry
 from src.utils.config import Config
-from src.utils.exceptions import ValidationError, ParsingError, InitializationError
+from src.utils.exceptions import InitializationError
 
 
 def setup_logging() -> logging.Logger:
@@ -122,7 +122,17 @@ def background_parse(
         elif document_image:
             input_type = 'image'
 
-        parser = EnhancedParser(socketio=socketio, sid=sid, logger=logger)
+        parser = ParserRegistry.get_parser(
+            parser_option=ParserOption(parser_option),
+            socketio=socketio,
+            sid=sid,
+        )
+        if parser is None:
+            socketio.emit(
+                "parsing_error", {"error": f"Parser for option {parser_option} not found."}, room=sid
+            )
+            return
+
         with parser:
             if not parser.is_initialized:
                 parser.initialize(input_type=input_type)
@@ -156,11 +166,18 @@ def background_parse(
                 email_content=email_content, document_image=document_image
             )
 
-            if "email_metadata" in result:
-                formatted_text = format_schema_output(result["email_metadata"])
-                result["formatted_schema"] = formatted_text
+            # Handle structured_data and metadata
+            structured_data = result.get("structured_data", {})
+            metadata = result.get("metadata", {})
 
-            serializable_result = make_serializable(result)
+            # Optionally, log or use metadata
+            logger.debug("Metadata from parsing: %s", metadata)
+
+            if "email_metadata" in structured_data:
+                formatted_text = format_schema_output(structured_data["email_metadata"])
+                structured_data["formatted_schema"] = formatted_text
+
+            serializable_result = make_serializable(structured_data)
             logger.debug("Serialized Result: %s", serializable_result)
 
             socketio.emit(
@@ -237,8 +254,8 @@ def parse_email_route():
         )
 
     try:
-        # Assuming ParserRegistry.get_parser returns parser options or configurations
-        parser_config = ParserRegistry.get_parser(parser_option)
+        # Adjusted get_parser call without 'input_type'
+        parser_config = ParserRegistry.get_parser(parser_option, socketio=socketio, sid=sid)
     except InitializationError as ie:
         logger.error("Parser initialization failed: %s", ie)
         return jsonify({"error_message": str(ie)}), 500

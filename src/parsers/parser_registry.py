@@ -1,7 +1,7 @@
 # src/parsers/parser_registry.py
 
 import logging
-from typing import Dict, Any, Optional
+from typing import Optional, Any, Dict
 
 from flask_socketio import SocketIO
 
@@ -24,7 +24,6 @@ class ParserRegistry:
     def get_parser(
         cls,
         parser_option: ParserOption,
-        input_type: str,
         socketio: Optional[SocketIO] = None,
         sid: Optional[str] = None,
     ) -> Optional[Any]:

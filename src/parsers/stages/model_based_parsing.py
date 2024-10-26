@@ -1,9 +1,7 @@
-# src/parsers/stages/model_based_parsing.py
-
 from transformers import pipeline
 import logging
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union, Tuple
 import torch
 import json
 import re
@@ -45,23 +43,53 @@ def initialize_model_parser(logger: logging.Logger, config: Dict[str, Any], prom
         raise ParsingError(f"Failed to initialize LLaMA model: {e}")
 
 
+def extract_json_from_llama_output(text: str, logger: logging.Logger) -> Dict[str, Any]:
+    """Find and extract JSON from LLaMA's text output."""
+    json_pattern = r'\{(?:[^{}]|(?R))*\}'
+    matches = re.finditer(json_pattern, text, re.DOTALL)
+
+    for match in matches:
+        try:
+            potential_json = match.group()
+            return json.loads(potential_json)
+        except json.JSONDecodeError:
+            continue
+
+    logger.error("No valid JSON found in output")
+    return {}
+
+
 def perform_model_based_parsing(prompt: str, llama_model: Any, logger: logging.Logger) -> Dict[str, Any]:
     try:
         logger.debug("Executing model-based parsing with prompt")
-        result = llama_model['model'](prompt, max_length=llama_model['model'].config.max_length, do_sample=True)
-        structured_data = extract_structured_data(result, logger)
+        result = llama_model['model'](
+            prompt, 
+            max_length=llama_model['model'].config.max_length,
+            do_sample=True,
+            temperature=0.1  # Lower temperature for more structured output
+        )
+        
+        json_data = {}
+        for entry in result:
+            json_data = extract_json_from_llama_output(entry['generated_text'], logger)
+            if json_data:
+                break
+        
+        if not json_data:
+            logger.error("Failed to extract JSON from LLaMA output")
+            raise ParsingError("No valid JSON extracted from model output.")
+        
+        structured_data = parse_json_sections(json_data, logger)
         validated_data = validate_structured_data(structured_data, QUICKBASE_SCHEMA, logger)
-        confidence_scores = calculate_confidence_scores(validated_data)
-        parsed_data = {
+        
+        return {
             "structured_data": validated_data,
             "metadata": {
                 "model_name": llama_model['model'].config.name_or_path,
                 "parsing_timestamp": datetime.now().isoformat(),
-                "confidence_scores": confidence_scores
+                "confidence_scores": calculate_confidence_scores(validated_data)
             }
         }
-        logger.debug(f"Model parsing complete: {len(structured_data)} sections extracted")
-        return parsed_data
     except Exception as e:
         logger.error(f"Model parsing failed: {e}", exc_info=True)
         raise ParsingError(f"Model parsing failed: {e}")
@@ -84,26 +112,6 @@ def calculate_confidence_scores(structured_data: Dict[str, Dict[str, List[Any]]]
     return confidence_scores
 
 
-def extract_structured_data(result: List[Dict[str, Any]], logger: logging.Logger) -> Dict[str, Dict[str, List[Any]]]:
-    structured_data = {}
-    for entry in result:
-        if isinstance(entry, dict):
-            text = entry.get("generated_text", "")
-            try:
-                json_data = json.loads(text)
-                sections = parse_json_sections(json_data, logger)
-                for section_name, section_content in sections.items():
-                    structured_data[section_name] = parse_section(section_content, logger)
-            except json.JSONDecodeError as jde:
-                logger.error(f"JSON decoding failed: {jde}")
-                # Attempt to recover by extracting valid JSON parts
-                recovered_data = recover_json(text, logger)
-                structured_data.update(recovered_data)
-            except Exception as e:
-                logger.error(f"Error extracting structured data: {e}", exc_info=True)
-    return structured_data
-
-
 def parse_json_sections(json_data: Dict[str, Any], logger: logging.Logger) -> Dict[str, Any]:
     sections = {}
     for section, content in json_data.items():
@@ -112,92 +120,6 @@ def parse_json_sections(json_data: Dict[str, Any], logger: logging.Logger) -> Di
         else:
             logger.warning(f"Unexpected section: {section}")
     return sections
-
-
-def parse_section(content: Any, logger: logging.Logger) -> Dict[str, List[Any]]:
-    fields = {}
-    if isinstance(content, dict):
-        for field, value in content.items():
-            field_type = determine_field_type(field)
-            if isinstance(value, list):
-                cleaned_values = [clean_field_value(v, field_type) for v in value]
-            else:
-                cleaned_values = [clean_field_value(value, field_type)]
-            fields[field] = cleaned_values
-    else:
-        logger.warning(f"Expected dict for section content, got {type(content)}")
-    logger.debug(f"Parsed fields for section: {fields}")
-    return fields
-
-
-def recover_json(text: str, logger: logging.Logger) -> Dict[str, Dict[str, List[Any]]]:
-    structured_data = {}
-    json_pattern = re.compile(r'\{.*?\}', re.DOTALL)
-    matches = json_pattern.findall(text)
-    for match in matches:
-        try:
-            json_data = json.loads(match)
-            sections = parse_json_sections(json_data, logger)
-            for section_name, section_content in sections.items():
-                if section_name not in structured_data:
-                    structured_data[section_name] = {}
-                for field, value in section_content.items():
-                    field_type = determine_field_type(field)
-                    cleaned_value = clean_field_value(value, field_type)
-                    if field in structured_data[section_name]:
-                        structured_data[section_name][field].append(cleaned_value)
-                    else:
-                        structured_data[section_name][field] = [cleaned_value]
-        except json.JSONDecodeError as jde:
-            logger.error(f"Failed to recover JSON from text: {jde}")
-    return structured_data
-
-
-def parse_checkbox(text: str) -> bool:
-    return text.lower() in ['yes', 'true', '1', 'checked', 'on']
-
-
-def clean_field_value(value: Any, field_type: str) -> Any:
-    if isinstance(value, str):
-        value = value.strip()
-    if field_type == "boolean":
-        if isinstance(value, bool):
-            return value
-        return parse_checkbox(str(value))
-    elif field_type == "date":
-        formatted_date = format_date(str(value))
-        return formatted_date if formatted_date else "N/A"
-    elif field_type == "string":
-        return value if value else "N/A"
-    elif field_type == "object":
-        if isinstance(value, dict):
-            cleaned_obj = {}
-            for k, v in value.items():
-                cleaned_obj[k] = clean_field_value(v, determine_field_type(k))
-            return cleaned_obj
-        return {"Checked": False, "Details": "N/A"}
-    elif field_type == "array":
-        if isinstance(value, list):
-            return [clean_field_value(v, "string") for v in value]
-        return ["N/A"]
-    else:
-        return value
-
-
-def determine_field_type(field_name: str) -> str:
-    # Map field names to their types based on schema
-    for section, fields in QUICKBASE_SCHEMA.items():
-        if field_name in fields:
-            return fields[field_name]["type"]
-    return "string"  # Default type
-
-
-def format_date(date_str: str) -> Optional[str]:
-    try:
-        dt = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
-        return dt.strftime("%Y-%m-%d")
-    except ValueError:
-        return None
 
 
 def validate_structured_data(structured_data: Dict[str, Dict[str, List[Any]]], schema: Dict[str, Any], logger: logging.Logger) -> Dict[str, Dict[str, List[Any]]]:
@@ -215,17 +137,22 @@ def validate_structured_data(structured_data: Dict[str, Dict[str, List[Any]]], s
                 coerced_value = coerce_type(value, field_type, schema, section, field, logger)
                 validated_values.append(coerced_value)
             structured_data[section][field] = validated_values
-    # Handle missing required fields
-    for section, fields in schema.items():
-        if section not in structured_data:
-            logger.warning(f"Missing required section: {section}")
-            structured_data[section] = {}
-        for field, properties in fields.items():
-            if properties.get("required") and field not in structured_data[section]:
-                logger.warning(f"Missing required field: {field} in section: {section}")
-                structured_data[section][field] = ["N/A"]
     return structured_data
 
+def _format_dates(dates: List[str]) -> List[str]:
+    """
+    Formats a list of date strings to 'YYYY-MM-DD'.
+    """
+    from datetime import datetime
+    formatted = []
+    for date in dates:
+        try:
+            if date != "N/A":
+                dt = datetime.fromisoformat(date.replace("Z", "+00:00"))
+                formatted.append(dt.strftime("%Y-%m-%d"))
+        except ValueError:
+            formatted.append("N/A")
+    return formatted if formatted else ["N/A"]
 
 def coerce_type(value: Any, field_type: str, schema: Dict[str, Any], section: str, field: str, logger: logging.Logger) -> Any:
     if value == "N/A":
@@ -234,7 +161,7 @@ def coerce_type(value: Any, field_type: str, schema: Dict[str, Any], section: st
         if field_type == "boolean":
             return bool(value)
         elif field_type == "date":
-            formatted_date = format_date(value)
+            formatted_date = _format_dates([value])[0]  # Use the local function
             if formatted_date:
                 return formatted_date
             else:

@@ -8,6 +8,7 @@ from typing import Optional, Tuple, List, Dict, Any
 import torch
 import re
 
+from .quickbase_schema import QUICKBASE_SCHEMA
 from .exceptions import ValidationError
 
 # Define constants for repeated strings
@@ -400,15 +401,6 @@ def validate_dependencies(parsed_data: dict) -> List[str]:
     return error_messages
 
 def validate_json(parsed_data: dict) -> Tuple[bool, str]:
-    """
-    Perform comprehensive validation on the parsed JSON data.
-
-    Args:
-        parsed_data (dict): The data to validate.
-
-    Returns:
-        Tuple[bool, str]: Validation status and error messages.
-    """
     logger.info("Starting JSON validation against schema and additional rules.")
     error_messages = []
 

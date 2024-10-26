@@ -4,7 +4,10 @@ import logging
 import os
 import asyncio
 import threading
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as ConcurrentTimeoutError
+from concurrent.futures import (
+    ThreadPoolExecutor,
+    TimeoutError as ConcurrentTimeoutError,
+)
 from typing import Any, Dict, Optional, Union, Callable, List, Tuple
 
 import torch
@@ -34,6 +37,7 @@ REQUESTING_PARTY: str = "Requesting Party"
 INSURED_INFORMATION: str = "Insured Information"
 ASSIGNMENT_INFORMATION: str = "Assignment Information"
 
+
 class EnhancedParser(BaseParser):
     REQUIRED_ENV_VARS = ["HF_TOKEN", "HF_HOME"]
 
@@ -54,7 +58,10 @@ class EnhancedParser(BaseParser):
         self.loop: Optional[asyncio.AbstractEventLoop] = None
         self.executor: Optional[ThreadPoolExecutor] = None
         self.data_merger: DataMerger = DataMerger(self.logger)
+        self.timeouts = self._set_timeouts()
+        self.input_type = None
         self._initialize_event_loop()
+        self._is_initialized = False
 
     def _init_core_attributes(
         self,
@@ -72,63 +79,76 @@ class EnhancedParser(BaseParser):
     def _initialize_event_loop(self) -> None:
         """Initialize the asyncio event loop in a thread-safe manner."""
         try:
-            try:
-                self.loop = asyncio.get_event_loop()
-            except RuntimeError:
+            if self.loop is None or self.loop.is_closed():
                 self.loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(self.loop)
-                
-            if self.loop.is_closed():
-                self.loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(self.loop)
-                
+
             self.logger.debug("Event loop initialized successfully")
         except Exception as e:
             self.logger.error("Failed to initialize asyncio loop", exc_info=True)
             raise InitializationError(f"Asyncio loop initialization failed: {e}") from e
 
-    async def parse_async(
-        self,
-        email_content: Optional[str] = None,
-        document_image: Optional[Union[str, Image.Image]] = None,
-    ) -> Dict[str, Any]:
-        if self.loop is None:
-            self.logger.error("Asyncio event loop is not initialized.")
-            return {}
-        return await self.loop.run_in_executor(
-            self.executor, self.parse, email_content, document_image
-        )
+        async def parse_async(
+            self,
+            email_content: Optional[str] = None,
+            document_image: Optional[Union[str, Image.Image]] = None,
+        ) -> Dict[str, Any]:
+            if self.loop is None:
+                self.logger.error("Asyncio event loop is not initialized.")
+                return {}
+            return await self.loop.run_in_executor(
+                self.executor, self.parse, email_content, document_image
+            )
+
+    @property
+    def is_initialized(self) -> bool:
+        """Check if the parser is fully initialized."""
+        return self._is_initialized
+
+    def initialize(self, input_type: str = "text") -> None:
+        """
+        Initialize the parser with the specified input type.
+
+        Args:
+            input_type (str): Type of input to process ("text", "image", or "both")
+        """
+        try:
+            self.input_type = input_type
+            if not self._is_initialized:
+                with self.lock:
+                    self._initialize_executor()
+                    self._initialize_models(input_type)
+                self._is_initialized = True
+                self.logger.info(
+                    "Parser initialized successfully for input type: %s", input_type
+                )
+        except Exception as e:
+            self.logger.error("Failed to initialize parser: %s", e, exc_info=True)
+            raise InitializationError(f"Parser initialization failed: {e}") from e
 
     def parse_email(
         self,
         email_content: Optional[str] = None,
         document_image: Optional[Union[str, Image.Image]] = None,
     ) -> Dict[str, Any]:
-        if not self.validate_input(email_content, document_image):
-            self.logger.error("Invalid input provided to parse_email.")
-            return {}
-        parsed_data = self.parse(email_content, document_image)
+        parsed_data = {}
+    
         try:
+            # Parse the email content or image
+            parsed_data = self.parse(email_content, document_image)
+    
+            # Validate the parsed data
             is_valid, errors = validate_json(parsed_data)
             if not is_valid:
-                self.logger.warning("JSON validation failed: %s", errors)
-                parsed_data["validation_issues"] = parsed_data.get(
-                    "validation_issues", []
-                )
-                parsed_data["validation_issues"].append(errors)
-            return parsed_data
-        except ValidationError as ve:
-            self.logger.error("ValidationError in parse_email: %s", ve)
-            parsed_data["validation_issues"] = parsed_data.get(
-                "validation_issues", []
-            ) + [str(ve)]
-            return parsed_data
+                self.logger.warning("Validation failed. Proceeding with partial results.")
+                parsed_data["validation_issues"] = errors
+    
         except Exception as e:
-            self.logger.error("Unexpected error in parse_email: %s", e, exc_info=True)
-            parsed_data["validation_issues"] = parsed_data.get(
-                "validation_issues", []
-            ) + [str(e)]
-            return parsed_data
+            self.logger.error("Error during email parsing: %s", e)
+            parsed_data["parsing_error"] = str(e)
+    
+        return parsed_data  # Always return what was parsed   
+
 
     def parse(
         self,
@@ -165,13 +185,16 @@ class EnhancedParser(BaseParser):
         document_image: Optional[Union[str, Image.Image]],
     ) -> str:
         if email_content and document_image:
-            return 'both'
+            return "both"
         elif email_content:
-            return 'text'
+            return "text"
         elif document_image:
-            return 'image'
+            return "image"
         else:
-            return 'none'
+            # Log and handle the "none" input type case
+            self.logger.error("Both email_content and document_image are missing.")
+            return "none"
+
 
     def _initialize_executor(self):
         if not self.executor:
@@ -182,12 +205,12 @@ class EnhancedParser(BaseParser):
 
     def _initialize_models(self, input_type: str) -> None:
         try:
-            if input_type in ['image', 'both'] and not self.donut_model:
+            if input_type in ["image", "both"] and not self.donut_model:
                 self.donut_processor, self.donut_model = self._initialize_with_retry(
                     initialize_donut, self.logger, Config.get_model_config("donut")
                 )
 
-            if input_type in ['text', 'both'] and not self.llama_model:
+            if input_type in ["text", "both"] and not self.llama_model:
                 self.llama_model = self._initialize_with_retry(
                     initialize_model_parser,
                     self.logger,
@@ -238,6 +261,13 @@ class EnhancedParser(BaseParser):
                 )
                 return component
             except (ValueError, OSError, TypeError) as e:
+                # Log each attempt failure
+                self.logger.warning(
+                    "Initialization attempt %d for %s failed: %s. Retrying...",
+                    attempt + 1,
+                    init_func.__name__,
+                    e,
+                )
                 if attempt == max_retries - 1:
                     self.logger.error(
                         "Failed to initialize %s after %d attempts: %s",
@@ -249,12 +279,6 @@ class EnhancedParser(BaseParser):
                     raise InitializationError(
                         f"Initialization failed for {init_func.__name__}: {e}"
                     ) from e
-                self.logger.warning(
-                    "Initialization attempt %d for %s failed: %s. Retrying...",
-                    attempt + 1,
-                    init_func.__name__,
-                    e,
-                )
                 torch.cuda.empty_cache()
 
     def _determine_thread_count(self) -> int:
@@ -271,18 +295,51 @@ class EnhancedParser(BaseParser):
         return max(1, thread_count)
 
     def _set_timeouts(self) -> Dict[str, int]:
-        return {
-            "donut_parsing": Config.get_model_config("donut").get("timeout", 60),
-            "llama_text_extraction": Config.get_model_config("llama").get("timeout_text_extraction", 60),
-            "llama_validation": Config.get_model_config("llama").get("timeout_validation", 45),
-            "llama_summarization": Config.get_model_config("llama").get("timeout_summarization", 30),
-            "post_processing": Config.get_model_config("post_processing").get("timeout", 30),
-            "json_validation": Config.get_model_config("json_validation").get("timeout", 30),
-        }
+        """
+        Set timeouts for various processing stages from configuration.
+        Returns a dictionary of stage timeouts with fallback defaults.
+        """
+        try:
+            # Get stages configuration
+            stages_config = Config.get_full_config().get("stages", {})
+
+            # Set default timeouts
+            timeouts = {
+                "donut_parsing": 60,
+                "llama_text_extraction": 60,
+                "llama_validation": 45,
+                "llama_summarization": 30,
+                "post_processing": 30,
+                "json_validation": 30,
+            }
+
+            # Dynamically adjust timeouts based on model size or performance
+            model_size = self.config.get("model_size", "default")
+            if model_size == "large":
+                timeouts = {key: value * 2 for key, value in timeouts.items()}
+            elif model_size == "small":
+                timeouts = {key: value // 2 for key, value in timeouts.items()}
+
+            self.logger.debug("Initialized timeouts: %s", timeouts)
+            return timeouts
+
+        except Exception as e:
+            self.logger.error("Error setting timeouts, using defaults: %s", str(e))
+            return {
+                "donut_parsing": 60,
+                "llama_text_extraction": 60,
+                "llama_validation": 45,
+                "llama_summarization": 30,
+                "post_processing": 30,
+                "json_validation": 30,
+            }
+
 
     def _render_prompts(self) -> Dict[str, str]:
         prompts = {}
-        prompt_config = self.config.get("models", {}).get("llama", {}).get("prompt_templates", {})
+        prompt_config = (
+            self.config.get("models", {}).get("llama", {}).get("prompt_templates", {})
+        )
         for task, template in prompt_config.items():
             if template:
                 data_points = Config.get_data_points()
@@ -370,9 +427,7 @@ class EnhancedParser(BaseParser):
 
         try:
             future = self.executor.submit(stage_method, **kwargs)
-            stage_result = future.result(
-                timeout=self._get_stage_timeout(stage_name)
-            )
+            stage_result = future.result(timeout=self._get_stage_timeout(stage_name))
 
             if isinstance(stage_result, dict) and stage_result:
                 parsed_data = self.data_merger.merge_parsed_data(
@@ -382,48 +437,12 @@ class EnhancedParser(BaseParser):
             self.logger.info("Completed stage: %s", stage_name)
             return parsed_data
 
-        except ConcurrentTimeoutError:
-            self.logger.error(
-                "Timeout in stage '%s': exceeded %d seconds.",
-                stage_name,
-                self._get_stage_timeout(stage_name),
-            )
-            parsed_data["validation_issues"] = parsed_data.get(
-                "validation_issues", []
-            ) + [f"Stage '{stage_name}' timed out."]
-            if not self.recover_from_failure(stage_name.lower().replace(" ", "_")):
-                self.logger.warning(
-                    "Failed to recover from timeout in stage '%s'. Continuing with next stage.",
-                    stage_name,
-                )
-        except ParsingError as pe:
-            self.logger.error(
-                "ParsingError in stage '%s': %s", stage_name, pe, exc_info=True
-            )
-            if not self.recover_from_failure(stage_name.lower().replace(" ", "_")):
-                self.logger.warning(
-                    "Failed to recover from error in stage '%s'. Continuing with next stage.",
-                    stage_name,
-                )
-        except ValidationError as ve:
-            self.logger.error(
-                "ValidationError in stage '%s': %s", stage_name, ve, exc_info=True
-            )
-            if not self.recover_from_failure(stage_name.lower().replace(" ", "_")):
-                self.logger.warning(
-                    "Failed to recover from validation error in stage '%s'. Continuing with next stage.",
-                    stage_name,
-                )
         except Exception as e:
+            # Log the error but continue with the next stage
             self.logger.error(
-                "Unexpected error in stage '%s': %s", stage_name, e, exc_info=True
+                "Error during stage '%s'. Continuing with partial results: %s", stage_name, e
             )
-            if not self.recover_from_failure(stage_name.lower().replace(" ", "_")):
-                self.logger.warning(
-                    "Failed to recover from error in stage '%s'. Continuing with next stage.",
-                    stage_name,
-                )
-        return parsed_data
+            return parsed_data  # Return what we have so far
 
     def _get_stage_timeout(self, stage_name: str) -> int:
         stage_key = stage_name.lower().replace(" ", "_")
@@ -525,15 +544,23 @@ class EnhancedParser(BaseParser):
                 )
                 return {}
 
-            prompt = self.llama_model['prompt_templates'].get("text_extraction", "")
+            prompt = self.llama_model["prompt_templates"].get("text_extraction", "")
             if not prompt:
                 self.logger.warning("No prompt template for Text Extraction.")
                 return {}
 
-            extracted_text = perform_model_based_parsing(
-                prompt, self.llama_model['model'], self.logger
+            parsing_result = perform_model_based_parsing(
+                prompt, self.llama_model, self.logger
             )
-            return {"extracted_text": extracted_text}
+
+            # Assuming 'structured_data' contains the extracted fields
+            structured_data = parsing_result.get("structured_data", {})
+            metadata = parsing_result.get("metadata", {})
+
+            # Optionally, store metadata if needed
+            self.logger.debug(f"Metadata from parsing: {metadata}")
+
+            return structured_data
         except ParsingError as pe:
             self.logger.error("ParsingError during Text Extraction stage: %s", pe)
             raise
@@ -557,20 +584,23 @@ class EnhancedParser(BaseParser):
             return parsed_data
         self.logger.debug("Executing Validation stage.")
         try:
-            prompt = self.llama_model['prompt_templates'].get("validation", "")
+            prompt = self.llama_model["prompt_templates"].get("validation", "")
             if not prompt:
                 self.logger.warning("No prompt template for Validation.")
                 return parsed_data
 
-            validated_data = perform_model_based_parsing(
-                prompt, self.llama_model['model'], self.logger
+            # Assuming validation might update 'parsed_data' with validation results
+            validation_result = perform_model_based_parsing(
+                prompt, self.llama_model, self.logger
             )
-            parsed_data.update(validated_data)
+
+            # Merge validation results into parsed_data
+            parsed_data.update(validation_result.get("structured_data", {}))
+            parsed_data.update(validation_result.get("metadata", {}))
+
             return parsed_data
         except (ValueError, OSError) as e:
-            self.logger.error(
-                "ValidationError during Validation stage: %s", e
-            )
+            self.logger.error("ValidationError during Validation stage: %s", e)
             parsed_data["validation_issues"] = parsed_data.get(
                 "validation_issues", []
             ) + [str(e)]
@@ -603,13 +633,13 @@ class EnhancedParser(BaseParser):
                 )
                 return
 
-            prompt = self.llama_model['prompt_templates'].get("summarization", "")
+            prompt = self.llama_model["prompt_templates"].get("summarization", "")
             if not prompt:
                 self.logger.warning("No prompt template for Summarization.")
                 return
 
             summary = perform_model_based_parsing(
-                prompt, self.llama_model['model'], self.logger
+                prompt, self.llama_model["model"], self.logger
             )
             if summary:
                 parsed_data["summary"] = summary
@@ -858,6 +888,7 @@ class EnhancedParser(BaseParser):
 
         self.logger.debug("No recovery method available for stage: %s", stage)
         return False
+
 
     def _recover_donut_parsing(self):
         self.donut_processor, self.donut_model = initialize_donut(

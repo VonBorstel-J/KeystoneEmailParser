@@ -1,11 +1,9 @@
-# src/config/parser_config.yaml
-
 # Directory where models will be cached
 cache_dir: ".cache"
 
 # Set Logging 
 logging:
-  level: "DEBUG"  # or "INFO", "WARNING", etc.
+  level: "DEBUG"
   handlers:
     - "StreamHandler"
     - "FileHandler"
@@ -14,150 +12,222 @@ logging:
 
 # Authentication settings
 authentication:
-  hf_token_env_var: "HF_TOKEN"  # Environment variable name for Hugging Face token
+  hf_token_env_var: "HF_TOKEN"
 
 data_points:
-  Requesting_Party:
+  "Requesting Party":
     description: "Information about the requesting party."
-    Insurance_Company:
+    "Insurance Company":
       description: "Name of the insurance company."
       required: true
-    Handler:
+      type: "string"
+      enum: ["Allianz", "State Farm", "GEICO"]
+    "Handler":
       description: "Handler's name and contact information."
       required: true
-    Carrier_Claim_Number:
+      type: "string"
+    "Carrier Claim Number":
       description: "Unique claim number assigned by the carrier."
       required: true
-  Insured_Information:
-    Name:
+      type: "string"
+      validation:
+        pattern: "^[A-Z0-9]{6,}$"
+  
+  "Insured Information":
+    "Name":
       description: "Full name of the insured individual."
       required: true
-    Contact_Number:
+      type: "string"
+    "Contact #":
       description: "Contact number of the insured."
       required: true
+      type: "string"
       validation:
         pattern: "^\\+?[1-9]\\d{1,14}$"
-    Loss_Address:
+    "Loss Address":
       description: "Address where the loss occurred."
       required: true
-    Public_Adjuster:
+      type: "string"
+    "Public Adjuster":
       description: "Information about the public adjuster, if any."
       required: false
-    Ownership_Status:
-      description: "Whether the insured is an owner or tenant of the loss location."
+      type: "string"
+    "Is the insured an Owner or a Tenant of the loss location?":
+      description: "Whether the insured is an owner or tenant."
       required: true
       type: "boolean"
-  Adjuster_Information:
-    Adjuster_Name:
+
+  "Adjuster Information":
+    "Adjuster Name":
       description: "Name of the adjuster."
       required: true
-    Adjuster_Phone_Number:
+      type: "string"
+    "Adjuster Phone Number":
       description: "Phone number of the adjuster."
       required: true
+      type: "string"
       validation:
         pattern: "^\\+?[1-9]\\d{1,14}$"
-    Adjuster_Email:
+    "Adjuster Email":
       description: "Email address of the adjuster."
       required: true
+      type: "string"
       validation:
         pattern: "^[\\w\\.-]+@[\\w\\.-]+\\.\\w+$"
-    Job_Title:
+        format: "email"
+    "Job Title":
       description: "Job title of the adjuster."
       required: false
-    Address:
+      type: "string"
+    "Address":
       description: "Address of the adjuster."
       required: false
-    Policy_Number:
+      type: "string"
+    "Policy #":
       description: "Policy number associated with the claim."
       required: true
+      type: "string"
       validation:
         pattern: "^POL\\d{6}$"
-  Assignment_Information:
-    Date_of_Loss:
+
+  "Assignment Information":
+    "Date of Loss/Occurrence":
       description: "Date when the loss or occurrence happened."
       required: true
+      type: "string"
       validation:
         format: "YYYY-MM-DD"
-    Cause_of_Loss:
+    "Cause of loss":
       description: "Cause behind the loss."
       required: true
-    Facts_of_Loss:
+      type: "string"
+    "Facts of Loss":
       description: "Detailed facts surrounding the loss."
       required: false
-    Loss_Description:
+      type: "string"
+    "Loss Description":
       description: "Description of the loss."
       required: true
-    Residence_Occupied:
+      type: "string"
+    "Residence Occupied During Loss":
       description: "Whether the residence was occupied during the loss."
       required: true
       type: "boolean"
-    Someone_Home:
+    "Was Someone home at time of damage":
       description: "Whether someone was home at the time of damage."
       required: true
       type: "boolean"
-    Repair_Progress:
+    "Repair or Mitigation Progress":
       description: "Progress on repair or mitigation."
       required: false
-    Type:
+      type: "string"
+    "Type":
       description: "Type of loss or claim."
       required: false
+      type: "string"
       enum: ["Wind", "Structural", "Hail", "Foundation", "Other"]
-    Inspection_Type:
+    "Inspection type":
       description: "Type of inspection conducted."
       required: false
-  Assignment_Type:
-    Wind:
+      type: "string"
+
+  "Assignment Type":
+    "Wind":
       description: "Wind-related damage."
       required: false
       type: "boolean"
-    Structural:
+    "Structural":
       description: "Structural damage."
       required: false
       type: "boolean"
-    Hail:
+    "Hail":
       description: "Hail-related damage."
       required: false
       type: "boolean"
-    Foundation:
+    "Foundation":
       description: "Foundation-related damage."
       required: false
       type: "boolean"
-    Other:
-      description: "Other types of damage. Provide details if selected."
+    "Other":
+      description: "Other types of damage."
       required: false
       type: "object"
       properties:
-        Checked:
+        "Checked":
           type: "boolean"
           required: true
-        Details:
+        "Details":
           type: "string"
           required: false
-  Additional_Details:
+
+  "Additional details/Special Instructions":
     description: "Any additional details or special instructions."
     required: false
-  Attachments:
+    type: "string"
+
+  "Attachment(s)":
     description: "List of attachments related to the email."
     required: false
-    type: "array of strings"
+    type: "array"
+    items:
+      type: "string"
+      format: "uri"
 
+  "Entities":
+    description: "Entity extraction results"
+    required: false
+    type: "object"
+    additionalProperties:
+      type: "array"
+      items:
+        type: "string"
+
+  "TransformerEntities":
+    description: "Transformer model entity extraction results"
+    required: false
+    type: "object"
+    additionalProperties:
+      type: "array"
+      items:
+        type: "string"
+
+  "missing_fields":
+    description: "List of missing required fields"
+    required: false
+    type: "array"
+    items:
+      type: "string"
+
+  "inconsistent_fields":
+    description: "List of fields with inconsistent values"
+    required: false
+    type: "array"
+    items:
+      type: "string"
+
+  "user_notifications":
+    description: "User notifications and warnings"
+    required: false
+    type: "array"
+    items:
+      type: "string"
+
+# Model configurations remain the same as in original file
 models:
-  # Donut model for OCR and document extraction tasks
   donut:
     repo_id: "naver-clova-ix/donut-base-finetuned-cord-v2"
     task: "document-question-answering"
-    device: "auto"  # Automatically use GPU if available, otherwise fallback to CPU
-    torch_dtype: "float16"  # Use half precision for GPU
+    device: "auto"
+    torch_dtype: "float16"
     timeout: 60
     max_length: 1024
     logging_level: "DEBUG"
 
-  # Unified LLaMA model for all text tasks
   llama:
     repo_id: "meta-llama/Llama-3.2-3B-Instruct"
     task: "text-generation"
-    device: "auto"  # Automatically use GPU if available, otherwise fallback to CPU
-    torch_dtype: "float16"  # Use half precision for GPU
+    device: "auto"
+    torch_dtype: "float16"
     timeout_text_extraction: 60
     timeout_validation: 45
     timeout_summarization: 30
@@ -165,90 +235,39 @@ models:
     logging_level: "INFO"
     prompt_templates:
       text_extraction: |
-        {%- set data_points = data_points | tojson %}
-        Extract the following information from the email content in JSON format, maintaining the hierarchical structure as per the schema. Ensure that all fields are present as per the schema, converting checkbox values to booleans and formatting dates as 'YYYY-MM-DD'. If a field is not applicable or not found, set its value to "N/A".
+        Respond only with a JSON object, no other text.
+        The JSON must exactly match this schema, with all fields included:
         
-        Example Output:
         {
           "Requesting Party": {
-            "Insurance Company": "Allianz",
-            "Handler": "John Doe",
-            "Carrier Claim Number": "ABC123456"
-          },
-          "Insured Information": {
-            "Name": "Jane Smith",
-            "Contact #": "+1234567890",
-            "Loss Address": "123 Main St, Anytown, USA",
-            "Public Adjuster": "N/A",
-            "Is the insured an Owner or a Tenant of the loss location?": true
-          },
-          "Adjuster Information": {
-            "Adjuster Name": "Mike Johnson",
-            "Adjuster Phone Number": "+0987654321",
-            "Adjuster Email": "mike.johnson@example.com",
-            "Job Title": "Senior Adjuster",
-            "Address": "456 Elm St, Othertown, USA",
-            "Policy #": "POL123456"
-          },
-          "Assignment Information": {
-            "Date of Loss/Occurrence": "2023-10-15",
-            "Cause of loss": "Hailstorm",
-            "Facts of Loss": "Hail damaged the roof.",
-            "Loss Description": "Roof shingles damaged by hail.",
-            "Residence Occupied During Loss": true,
-            "Was Someone home at time of damage": false,
-            "Repair or Mitigation Progress": "Roof repairs scheduled.",
-            "Type": "Hail",
-            "Inspection type": "Initial Inspection"
-          },
-          "Assignment Type": {
-            "Wind": false,
-            "Structural": true,
-            "Hail": true,
-            "Foundation": false,
-            "Other": {
-              "Checked": false,
-              "Details": "N/A"
-            }
-          },
-          "Additional details/Special Instructions": "Please expedite the review process.",
-          "Attachment(s)": [
-            "http://example.com/attachment1.pdf",
-            "http://example.com/attachment2.jpg"
-          ]
-        }
-        
-        Field Types:
-        {
-          "Requesting Party": {
-            "Insurance Company": "string",
+            "Insurance Company": "string (enum: Allianz, State Farm, GEICO)",
             "Handler": "string",
-            "Carrier Claim Number": "string"
+            "Carrier Claim Number": "string (pattern: ^[A-Z0-9]{6,}$)"
           },
           "Insured Information": {
             "Name": "string",
-            "Contact #": "string",
+            "Contact #": "string (pattern: ^\\+?[1-9]\\d{1,14}$)",
             "Loss Address": "string",
             "Public Adjuster": "string",
             "Is the insured an Owner or a Tenant of the loss location?": "boolean"
           },
           "Adjuster Information": {
             "Adjuster Name": "string",
-            "Adjuster Phone Number": "string",
-            "Adjuster Email": "string",
+            "Adjuster Phone Number": "string (pattern: ^\\+?[1-9]\\d{1,14}$)",
+            "Adjuster Email": "string (email format)",
             "Job Title": "string",
             "Address": "string",
-            "Policy #": "string"
+            "Policy #": "string (pattern: ^POL\\d{6}$)"
           },
           "Assignment Information": {
-            "Date of Loss/Occurrence": "date",
+            "Date of Loss/Occurrence": "date (YYYY-MM-DD)",
             "Cause of loss": "string",
             "Facts of Loss": "string",
             "Loss Description": "string",
             "Residence Occupied During Loss": "boolean",
             "Was Someone home at time of damage": "boolean",
             "Repair or Mitigation Progress": "string",
-            "Type": "string",
+            "Type": "string (enum: Wind, Structural, Hail, Foundation, Other)",
             "Inspection type": "string"
           },
           "Assignment Type": {
@@ -262,14 +281,108 @@ models:
             }
           },
           "Additional details/Special Instructions": "string",
-          "Attachment(s)": "array of strings"
+          "Attachment(s)": "array of strings (uri format)",
+          "Entities": "object with string array values",
+          "TransformerEntities": "object with string array values",
+          "missing_fields": "array of strings",
+          "inconsistent_fields": "array of strings",
+          "user_notifications": "array of strings"
         }
+        
+        Include "N/A" for any missing values.
+        Format all dates as YYYY-MM-DD.
+        Use true/false for boolean values.
+        
+        Email content to parse:
+        {{ email_content }}
 
       validation: |
         Validate the extracted information against the original email content.
-        Ensure that all key fields are accurate and complete.
-        Check for correct data types as specified.
-        Handle missing or "N/A" values appropriately.
+        Check for:
+        1. Required fields presence
+        2. Correct data types and formats
+        3. Valid enum values where specified
+        4. Pattern matching for formatted fields
+        5. Proper date formatting (YYYY-MM-DD)
+        6. Boolean value consistency
+        7. Valid email and phone number formats
+        8. Policy number format validation
+        9. Carrier claim number format validation
+        
+        Flag any inconsistencies or missing required fields.
 
       summarization: |
-        Summarize the provided information, fo
+        Summarize the provided information, focusing on:
+        - Key points regarding the loss
+        - Adjuster and insured information
+        - Important dates and events
+        - Public adjuster involvement
+        - Inspection details and types
+        - Any special instructions or additional details
+        - Missing or inconsistent information
+        - Required follow-up items
+
+# Processing configurations
+processing:
+  batch_size: 1
+  max_length: 1024
+  device: "auto"
+  fallback_to_cpu: true
+
+# Stage configurations
+stages:
+  email_parsing:
+    enabled: true
+    timeout: 30
+  donut_parsing:
+    enabled: true
+    timeout: 60
+  text_extraction:
+    enabled: true
+    timeout: 60
+  validation:
+    enabled: true
+    timeout: 45
+  summarization:
+    enabled: true
+    timeout: 30
+  post_processing:
+    enabled: true
+    timeout: 30
+  json_validation:
+    enabled: true
+    timeout: 30
+
+# Schema validation settings
+schema:
+  validate_input: true
+  validate_output: true
+
+# Error handling
+error_handling:
+  max_retries: 5
+  retry_delay: 2.0
+  fallback_enabled: true
+
+# Field validation rules
+field_validation:
+  date_format: "YYYY-MM-DD"
+  phone_number_pattern: "^\\+?[1-9]\\d{1,14}$"
+  email_pattern: "^[\\w\\.-]+@[\\w\\.-]+\\.\\w+$"
+  policy_number_pattern: "^POL\\d{6}$"
+  carrier_claim_pattern: "^[A-Z0-9]{6,}$"
+  boolean_handling:
+    true_values: ["yes", "true", "1", "checked", "on"]
+    false_values: ["no", "false", "0", "unchecked", "off"]
+
+# System prompt for enforcing output format
+system_prompt: |
+  You are an advanced data extraction assistant. Extract information from the provided email content and output it strictly in JSON format according to the defined schema. Ensure:
+  1. All required fields are present
+  2. Correct data types and formats
+  3. "N/A" for missing optional fields
+  4. YYYY-MM-DD date format
+  5. Boolean values as true/false
+  6. Valid enum values where specified
+  7. Pattern matching for formatted fields
+  8. Complete validation of all extracted data
