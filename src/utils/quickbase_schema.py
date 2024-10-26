@@ -9,7 +9,7 @@ QUICKBASE_SCHEMA: Dict[str, Dict[str, Dict[str, Any]]] = {
             "field_id": "field_1",
             "type": "string",
             "required": True,
-            "enum": ["Allianz", "State Farm", "GEICO"]  
+            "enum": ["Allianz", "State Farm", "GEICO"]
         },
         "Handler": {
             "field_id": "field_2",
@@ -20,7 +20,7 @@ QUICKBASE_SCHEMA: Dict[str, Dict[str, Dict[str, Any]]] = {
             "field_id": "field_3",
             "type": "string",
             "required": True,
-            "pattern": "^[A-Z0-9]{6,}$"  
+            "pattern": "^[A-Z0-9]{6,}$"
         }
     },
     "Insured Information": {
@@ -33,7 +33,7 @@ QUICKBASE_SCHEMA: Dict[str, Dict[str, Dict[str, Any]]] = {
             "field_id": "field_5",
             "type": "string",
             "required": True,
-            "pattern": "^\\+?[1-9]\\d{1,14}$"  
+            "pattern": "^\\+?[1-9]\\d{1,14}$"
         },
         "Loss Address": {
             "field_id": "field_6",
@@ -61,7 +61,7 @@ QUICKBASE_SCHEMA: Dict[str, Dict[str, Dict[str, Any]]] = {
             "field_id": "field_10",
             "type": "string",
             "required": True,
-            "pattern": "^\\+?[1-9]\\d{1,14}$"  
+            "pattern": "^\\+?[1-9]\\d{1,14}$"
         },
         "Adjuster Email": {
             "field_id": "field_11",
@@ -83,7 +83,7 @@ QUICKBASE_SCHEMA: Dict[str, Dict[str, Dict[str, Any]]] = {
             "field_id": "field_14",
             "type": "string",
             "required": True,
-            "pattern": "^POL\\d{6}$"  
+            "pattern": "^POL\\d{6}$"
         }
     },
     "Assignment Information": {
@@ -183,7 +183,7 @@ QUICKBASE_SCHEMA: Dict[str, Dict[str, Dict[str, Any]]] = {
         "type": "array",
         "items": {
             "type": "string",
-            "format": "uri"  
+            "format": "uri"
         },
         "required": False
     },
@@ -219,4 +219,3 @@ QUICKBASE_SCHEMA: Dict[str, Dict[str, Dict[str, Any]]] = {
         "items": {"type": "string"},
     },
 }
-

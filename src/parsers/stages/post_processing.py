@@ -1,23 +1,15 @@
+# src/parsers/stages/post_processing.py
+
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, List
 import re
 from datetime import datetime
+from src.utils.config import Config
 
 def post_process_parsed_data(parsed_data: Dict[str, Any], logger: logging.Logger) -> Dict[str, Any]:
-    """
-    Cleans and normalizes the parsed data.
-
-    Args:
-        parsed_data (Dict[str, Any]): Parsed data from previous stages.
-        logger (logging.Logger): Logger instance.
-
-    Returns:
-        Dict[str, Any]: Post-processed data.
-    """
     try:
         logger.debug("Starting post-processing of parsed data.")
         processed_data = {}
-        
         for section, fields in parsed_data.items():
             if isinstance(fields, dict):
                 processed_section = {}
@@ -26,49 +18,36 @@ def post_process_parsed_data(parsed_data: Dict[str, Any], logger: logging.Logger
                     if isinstance(values, list):
                         for value in values:
                             if isinstance(value, dict) and 'value' in value:
-                                processed_value = normalize_value(value['value'], field)
+                                processed_value = normalize_value(value['value'], field, logger)
                                 confidence = value.get('confidence', 1.0)
                                 processed_values.append({"value": processed_value, "confidence": confidence})
                             else:
-                                processed_value = normalize_value(value, field)
+                                processed_value = normalize_value(value, field, logger)
                                 processed_values.append({"value": processed_value, "confidence": 1.0})
                     else:
-                        processed_value = normalize_value(values, field)
+                        processed_value = normalize_value(values, field, logger)
                         processed_values.append({"value": processed_value, "confidence": 1.0})
-                    
                     processed_section[field] = processed_values
                 processed_data[section] = processed_section
             else:
                 processed_data[section] = fields
-
         logger.debug("Post-processing completed successfully.")
         return processed_data
     except Exception as e:
         logger.error(f"Error during post-processing: {e}", exc_info=True)
         return parsed_data
 
-def normalize_value(value: Any, field: str) -> Any:
+def normalize_value(value: Any, field: str, logger: logging.Logger) -> Any:
     if "date" in field.lower():
-        return normalize_date(value)
+        return normalize_date(value, logger)
     elif "phone" in field.lower():
-        return normalize_phone_number(value)
+        return normalize_phone_number(value, logger)
     elif "email" in field.lower():
         return value.lower() if isinstance(value, str) else value
     return value
 
 def normalize_date(date_str: str, logger: logging.Logger) -> str:
-    """
-    Normalizes date strings to ISO format.
-
-    Args:
-        date_str (str): Date string to normalize.
-        logger (logging.Logger): Logger instance.
-
-    Returns:
-        str: Normalized date string or original string if parsing fails.
-    """
-    from src.utils.config_loader import ConfigLoader
-    config = ConfigLoader.load_config()
+    config = Config.get_full_config()
     date_formats = config.get("date_formats", [])
     for fmt in date_formats:
         try:
@@ -81,18 +60,7 @@ def normalize_date(date_str: str, logger: logging.Logger) -> str:
     return date_str
 
 def normalize_phone_number(phone_str: str, logger: logging.Logger) -> str:
-    """
-    Normalizes phone numbers to a standard format.
-
-    Args:
-        phone_str (str): Phone number string to normalize.
-        logger (logging.Logger): Logger instance.
-
-    Returns:
-        str: Normalized phone number or original string if parsing fails.
-    """
     try:
-        # Example: Normalize to E.164 format
         phone_digits = re.sub(r'\D', '', phone_str)
         if len(phone_digits) == 10:
             normalized_phone = f"+1{phone_digits}"
@@ -105,15 +73,20 @@ def normalize_phone_number(phone_str: str, logger: logging.Logger) -> str:
         logger.error(f"Error normalizing phone number '{phone_str}': {e}", exc_info=True)
         return phone_str
 
-def validate_email(email: str) -> bool:
-    """
-    Validates email format.
-
-    Args:
-        email (str): Email string to validate.
-
-    Returns:
-        bool: True if valid, False otherwise.
-    """
-    regex = r'^\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
-    return re.match(regex, email) is not None
+def validate_against_email(parsed_data: Dict[str, Any], email_content: str, logger: logging.Logger) -> List[str]:
+    errors = []
+    key_fields = {
+        'claim_number': parsed_data.get('Requesting_Party', {}).get('Carrier_Claim_Number', []),
+        'adjuster_name': parsed_data.get('Adjuster_Information', {}).get('Adjuster_Name', []),
+        'date_of_loss': parsed_data.get('Assignment_Information', {}).get('Date_of_Loss/Occurrence', []),
+    }
+    for field_name, parsed_values in key_fields.items():
+        if not parsed_values:
+            errors.append(f"Missing key field: {field_name}")
+            logger.warning(f"Missing key field: {field_name} in parsed data")
+            continue
+        for value in parsed_values:
+            if value not in email_content:
+                errors.append(f"Mismatch for field '{field_name}': Parsed value '{value}' not found in email content")
+                logger.warning(f"Mismatch for field '{field_name}': Parsed value '{value}' not found in email content")
+    return errors

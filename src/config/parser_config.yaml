@@ -1,0 +1,275 @@
+# src/config/parser_config.yaml
+
+# Directory where models will be cached
+cache_dir: ".cache"
+
+# Set Logging 
+logging:
+  level: "DEBUG"  # or "INFO", "WARNING", etc.
+  handlers:
+    - "StreamHandler"
+    - "FileHandler"
+  file_path: "logs/parser.log"
+  create_logs_dir_if_not_exists: true
+
+# Authentication settings
+authentication:
+  hf_token_env_var: "HF_TOKEN"  # Environment variable name for Hugging Face token
+
+data_points:
+  Requesting_Party:
+    description: "Information about the requesting party."
+    Insurance_Company:
+      description: "Name of the insurance company."
+      required: true
+    Handler:
+      description: "Handler's name and contact information."
+      required: true
+    Carrier_Claim_Number:
+      description: "Unique claim number assigned by the carrier."
+      required: true
+  Insured_Information:
+    Name:
+      description: "Full name of the insured individual."
+      required: true
+    Contact_Number:
+      description: "Contact number of the insured."
+      required: true
+      validation:
+        pattern: "^\\+?[1-9]\\d{1,14}$"
+    Loss_Address:
+      description: "Address where the loss occurred."
+      required: true
+    Public_Adjuster:
+      description: "Information about the public adjuster, if any."
+      required: false
+    Ownership_Status:
+      description: "Whether the insured is an owner or tenant of the loss location."
+      required: true
+      type: "boolean"
+  Adjuster_Information:
+    Adjuster_Name:
+      description: "Name of the adjuster."
+      required: true
+    Adjuster_Phone_Number:
+      description: "Phone number of the adjuster."
+      required: true
+      validation:
+        pattern: "^\\+?[1-9]\\d{1,14}$"
+    Adjuster_Email:
+      description: "Email address of the adjuster."
+      required: true
+      validation:
+        pattern: "^[\\w\\.-]+@[\\w\\.-]+\\.\\w+$"
+    Job_Title:
+      description: "Job title of the adjuster."
+      required: false
+    Address:
+      description: "Address of the adjuster."
+      required: false
+    Policy_Number:
+      description: "Policy number associated with the claim."
+      required: true
+      validation:
+        pattern: "^POL\\d{6}$"
+  Assignment_Information:
+    Date_of_Loss:
+      description: "Date when the loss or occurrence happened."
+      required: true
+      validation:
+        format: "YYYY-MM-DD"
+    Cause_of_Loss:
+      description: "Cause behind the loss."
+      required: true
+    Facts_of_Loss:
+      description: "Detailed facts surrounding the loss."
+      required: false
+    Loss_Description:
+      description: "Description of the loss."
+      required: true
+    Residence_Occupied:
+      description: "Whether the residence was occupied during the loss."
+      required: true
+      type: "boolean"
+    Someone_Home:
+      description: "Whether someone was home at the time of damage."
+      required: true
+      type: "boolean"
+    Repair_Progress:
+      description: "Progress on repair or mitigation."
+      required: false
+    Type:
+      description: "Type of loss or claim."
+      required: false
+      enum: ["Wind", "Structural", "Hail", "Foundation", "Other"]
+    Inspection_Type:
+      description: "Type of inspection conducted."
+      required: false
+  Assignment_Type:
+    Wind:
+      description: "Wind-related damage."
+      required: false
+      type: "boolean"
+    Structural:
+      description: "Structural damage."
+      required: false
+      type: "boolean"
+    Hail:
+      description: "Hail-related damage."
+      required: false
+      type: "boolean"
+    Foundation:
+      description: "Foundation-related damage."
+      required: false
+      type: "boolean"
+    Other:
+      description: "Other types of damage. Provide details if selected."
+      required: false
+      type: "object"
+      properties:
+        Checked:
+          type: "boolean"
+          required: true
+        Details:
+          type: "string"
+          required: false
+  Additional_Details:
+    description: "Any additional details or special instructions."
+    required: false
+  Attachments:
+    description: "List of attachments related to the email."
+    required: false
+    type: "array of strings"
+
+models:
+  # Donut model for OCR and document extraction tasks
+  donut:
+    repo_id: "naver-clova-ix/donut-base-finetuned-cord-v2"
+    task: "document-question-answering"
+    device: "auto"  # Automatically use GPU if available, otherwise fallback to CPU
+    torch_dtype: "float16"  # Use half precision for GPU
+    timeout: 60
+    max_length: 1024
+    logging_level: "DEBUG"
+
+  # Unified LLaMA model for all text tasks
+  llama:
+    repo_id: "meta-llama/Llama-3.2-3B-Instruct"
+    task: "text-generation"
+    device: "auto"  # Automatically use GPU if available, otherwise fallback to CPU
+    torch_dtype: "float16"  # Use half precision for GPU
+    timeout_text_extraction: 60
+    timeout_validation: 45
+    timeout_summarization: 30
+    max_length: 1024
+    logging_level: "INFO"
+    prompt_templates:
+      text_extraction: |
+        {%- set data_points = data_points | tojson %}
+        Extract the following information from the email content in JSON format, maintaining the hierarchical structure as per the schema. Ensure that all fields are present as per the schema, converting checkbox values to booleans and formatting dates as 'YYYY-MM-DD'. If a field is not applicable or not found, set its value to "N/A".
+        
+        Example Output:
+        {
+          "Requesting Party": {
+            "Insurance Company": "Allianz",
+            "Handler": "John Doe",
+            "Carrier Claim Number": "ABC123456"
+          },
+          "Insured Information": {
+            "Name": "Jane Smith",
+            "Contact #": "+1234567890",
+            "Loss Address": "123 Main St, Anytown, USA",
+            "Public Adjuster": "N/A",
+            "Is the insured an Owner or a Tenant of the loss location?": true
+          },
+          "Adjuster Information": {
+            "Adjuster Name": "Mike Johnson",
+            "Adjuster Phone Number": "+0987654321",
+            "Adjuster Email": "mike.johnson@example.com",
+            "Job Title": "Senior Adjuster",
+            "Address": "456 Elm St, Othertown, USA",
+            "Policy #": "POL123456"
+          },
+          "Assignment Information": {
+            "Date of Loss/Occurrence": "2023-10-15",
+            "Cause of loss": "Hailstorm",
+            "Facts of Loss": "Hail damaged the roof.",
+            "Loss Description": "Roof shingles damaged by hail.",
+            "Residence Occupied During Loss": true,
+            "Was Someone home at time of damage": false,
+            "Repair or Mitigation Progress": "Roof repairs scheduled.",
+            "Type": "Hail",
+            "Inspection type": "Initial Inspection"
+          },
+          "Assignment Type": {
+            "Wind": false,
+            "Structural": true,
+            "Hail": true,
+            "Foundation": false,
+            "Other": {
+              "Checked": false,
+              "Details": "N/A"
+            }
+          },
+          "Additional details/Special Instructions": "Please expedite the review process.",
+          "Attachment(s)": [
+            "http://example.com/attachment1.pdf",
+            "http://example.com/attachment2.jpg"
+          ]
+        }
+        
+        Field Types:
+        {
+          "Requesting Party": {
+            "Insurance Company": "string",
+            "Handler": "string",
+            "Carrier Claim Number": "string"
+          },
+          "Insured Information": {
+            "Name": "string",
+            "Contact #": "string",
+            "Loss Address": "string",
+            "Public Adjuster": "string",
+            "Is the insured an Owner or a Tenant of the loss location?": "boolean"
+          },
+          "Adjuster Information": {
+            "Adjuster Name": "string",
+            "Adjuster Phone Number": "string",
+            "Adjuster Email": "string",
+            "Job Title": "string",
+            "Address": "string",
+            "Policy #": "string"
+          },
+          "Assignment Information": {
+            "Date of Loss/Occurrence": "date",
+            "Cause of loss": "string",
+            "Facts of Loss": "string",
+            "Loss Description": "string",
+            "Residence Occupied During Loss": "boolean",
+            "Was Someone home at time of damage": "boolean",
+            "Repair or Mitigation Progress": "string",
+            "Type": "string",
+            "Inspection type": "string"
+          },
+          "Assignment Type": {
+            "Wind": "boolean",
+            "Structural": "boolean",
+            "Hail": "boolean",
+            "Foundation": "boolean",
+            "Other": {
+              "Checked": "boolean",
+              "Details": "string"
+            }
+          },
+          "Additional details/Special Instructions": "string",
+          "Attachment(s)": "array of strings"
+        }
+
+      validation: |
+        Validate the extracted information against the original email content.
+        Ensure that all key fields are accurate and complete.
+        Check for correct data types as specified.
+        Handle missing or "N/A" values appropriately.
+
+      summarization: |
+        Summarize the provided information, fo

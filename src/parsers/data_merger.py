@@ -7,6 +7,7 @@ from copy import deepcopy
 
 from src.utils.quickbase_schema import QUICKBASE_SCHEMA
 
+
 @dataclass
 class MergeChange:
     """

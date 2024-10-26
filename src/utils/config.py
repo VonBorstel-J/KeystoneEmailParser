@@ -1,287 +1,182 @@
-# src/utils/config.py
+# config.py
 
+import yaml
 import logging
-import torch
-from typing import Any, Dict, List, Optional, Union
+from pathlib import Path
+from typing import Dict, Any, Optional, List
 
-from src.utils.config_loader import ConfigLoader
+import torch 
+import pipeline
+
+
+class ConfigurationError(Exception):
+    """Base exception for configuration errors."""
+    pass
 
 
 class Config:
-    _config = {}  
-    """
-    Configuration utility class providing easy access to parser configuration settings.
-    Interfaces with ConfigLoader to provide a clean API for accessing configuration values.
-    """
+    """Simplified configuration management for the parser system."""
+
+    _config: Dict[str, Any] = {}
+    _is_initialized: bool = False
 
     @classmethod
     def initialize(cls, config_path: Optional[str] = None) -> None:
-        """
-        Initializes the configuration system.
+        """Initialize configuration from a YAML file."""
+        if cls._is_initialized:
+            return
 
-        Args:
-            config_path (Optional[str]): Optional path to configuration file.
-        """
-        if config_path:
-            ConfigLoader.load(config_path)
-        else:
-            ConfigLoader.load()
+        try:
+            # Use the provided path if it exists, else use the default path
+            if not config_path:
+                config_path = Path(__file__).parent.parent / "config" / "parser_config.yaml"
+
+            # Log the config path to ensure correctness
+            logging.debug(f"Loading config from: {config_path}")
+
+            with open(config_path, 'r') as f:
+                cls._config = yaml.safe_load(f) or {}
+
+            # Log the loaded configuration for debugging
+            logging.debug(f"Loaded configuration: {cls._config}")
+
+            cls._is_initialized = True
+            logging.info("Configuration initialized successfully")
+
+        except FileNotFoundError:
+            logging.error(f"Configuration file not found at: {config_path}")
+            raise ConfigurationError(f"Configuration file not found at: {config_path}")
+        except yaml.YAMLError as e:
+            logging.error(f"Error parsing YAML file: {e}")
+            raise ConfigurationError(f"Error parsing YAML file: {e}")
+        except Exception as e:
+            logging.error(f"Unexpected error during configuration initialization: {e}")
+            raise ConfigurationError(f"Unexpected error during configuration initialization: {e}") from e
+
+    @classmethod
+    def get_full_config(cls) -> Dict[str, Any]:
+        """Retrieve the full configuration."""
+        if not cls._is_initialized:
+            cls.initialize()
+        logging.debug(f"Full config loaded: {cls._config}")
+        return cls._config
+
+    @classmethod
+    def get_processing_config(cls) -> Dict[str, Any]:
+        """Retrieve the processing section of the configuration."""
+        return cls.get_full_config().get("processing", {})
 
     @classmethod
     def get_model_config(cls, model_name: str) -> Dict[str, Any]:
-        """
-        Gets the complete configuration for a specific model.
+        """Retrieve the configuration for a specific model."""
+        models = cls.get_full_config().get("models", {})
+        if model_name not in models:
+            raise ConfigurationError(f"Configuration for model '{model_name}' not found")
+        return models[model_name]
 
-        Args:
-            model_name (str): Name of the model (e.g., 'ner', 'donut').
+    @classmethod
+    def get_logging_config(cls) -> Dict[str, Any]:
+        """Retrieve the logging configuration."""
+        return cls.get_full_config().get("logging", {})
 
-        Returns:
-            Dict[str, Any]: Complete model configuration.
-        """
-        return ConfigLoader.get_model_config(model_name)
+    @classmethod
+    def get_cache_dir(cls) -> str:
+        """Retrieve the cache directory from the configuration."""
+        return cls.get_full_config().get("cache_dir", ".cache")
+
+    @classmethod
+    def should_fallback_to_cpu(cls) -> bool:
+        """Determine if fallback to CPU is enabled."""
+        return cls.get_processing_config().get("fallback_to_cpu", True)
+
+    @classmethod
+    def is_amp_enabled(cls) -> bool:
+        """Check if Automatic Mixed Precision (AMP) is enabled."""
+        return cls.get_processing_config().get("enable_amp", False)
+
+    @classmethod
+    def should_optimize_memory(cls) -> bool:
+        """Check if memory optimization is enabled."""
+        return cls.get_processing_config().get("optimize_memory", True)
+
+    @classmethod
+    def get_enabled_stages(cls) -> List[str]:
+        """Get list of enabled parsing stages."""
+        stages = cls.get_full_config().get("stages", {})
+        return [
+            stage_name
+            for stage_name, config in stages.items()
+            if config.get("enabled", True)
+        ]
+
+    @classmethod
+    def get_stage_config(cls, stage_name: str) -> Dict[str, Any]:
+        """Get configuration for a specific stage."""
+        stages = cls.get_full_config().get("stages", {})
+        if stage_name not in stages:
+            raise ConfigurationError(f"Configuration for stage '{stage_name}' not found")
+        return stages[stage_name]
+
+    @classmethod
+    def get_error_handling_config(cls) -> Dict[str, Any]:
+        """Get error handling configuration."""
+        return cls.get_full_config().get("error_handling", {})
+
+    @classmethod
+    def initialize_model(cls, model_name: str) -> Any:
+        """Initialize a model with appropriate configuration."""
+        model_config = cls.get_model_config(model_name)
+        device = cls.get_device(model_name)
+
+        try:
+            # Initialize model with configuration
+            model_kwargs = {
+                "device_map": "auto" if device == "cuda" else None,
+                "torch_dtype": torch.float16 if device == "cuda" else torch.float32,
+                "cache_dir": cls.get_cache_dir(),
+            }
+
+            model = pipeline(
+                task=model_config.get("task", "text-generation"),
+                model=model_config["repo_id"],
+                tokenizer=model_config["repo_id"],
+                **model_kwargs,
+            )
+
+            logging.info(f"Successfully initialized model {model_name} on {device}")
+            return model
+
+        except Exception as e:
+            raise ConfigurationError(f"Failed to initialize model {model_name}: {str(e)}")
 
     @classmethod
     def get_device(cls, model_name: Optional[str] = None) -> str:
-        """
-        Gets the appropriate device for a model or globally.
-
-        Args:
-            model_name (Optional[str]): Model name to get specific device for.
-
-        Returns:
-            str: Device to use ('cuda' or 'cpu').
-        """
+        """Get appropriate device for model or global setting."""
         if model_name:
-            device = (
-                cls._config.get("models", {}).get(model_name, {}).get("device", "auto")
-            )
+            device = cls.get_model_config(model_name).get("device", "auto")
         else:
-            device = cls._config.get("processing", {}).get("device", "auto")
+            device = cls.get_processing_config().get("device", "auto")
 
-        # Always resolve 'auto' to actual device
+        # Handle 'auto' device setting
         if device == "auto":
-            return "cuda" if torch.cuda.is_available() else "cpu"
-
-        # Validate device string
-        valid_devices = {"cpu", "cuda"}
-        if device not in valid_devices:
-            return "cuda" if torch.cuda.is_available() else "cpu"
+            device = "cuda" if torch.cuda.is_available() else "cpu"
 
         return device
 
     @classmethod
-    def _process_device_settings(cls) -> None:
-        """Processes and validates device settings for all models."""
-        # Update global device setting
-        global_device = cls.get_device()
-        cls._config["processing"]["device"] = global_device
-
-        # Update model-specific device settings
-        for model_name, model_config in cls._config.get("models", {}).items():
-            if isinstance(model_config, dict):
-                model_config["device"] = cls.get_device(model_name)
-
-    @classmethod
-    def should_quantize(cls, model_name: str) -> bool:
-        """
-        Checks if a model should use quantization.
-
-        Args:
-            model_name (str): Name of the model.
-
-        Returns:
-            bool: True if quantization should be used.
-        """
-        return ConfigLoader.get(f"models.{model_name}.quantize", False)
-
-    @classmethod
-    def get_cache_dir(cls) -> str:
-        """
-        Gets the cache directory path.
-
-        Returns:
-            str: Absolute path to cache directory.
-        """
-        return ConfigLoader.get_cache_dir()
-
-    @classmethod
-    def get_hf_token(cls) -> Optional[str]:
-        """
-        Gets the Hugging Face token from environment variable.
-
-        Returns:
-            Optional[str]: The token if available.
-        """
-        import os
-
-        env_var = ConfigLoader.get("authentication.hf_token_env_var", "HF_TOKEN")
-        return os.getenv(env_var)
-
-    @classmethod
-    def get_processing_config(cls) -> Dict[str, Any]:
-        """
-        Gets all processing-related configuration.
-
-        Returns:
-            Dict[str, Any]: Processing configuration.
-        """
-        return ConfigLoader.get("processing", {})
-
-    @classmethod
-    def get_batch_size(cls, model_name: Optional[str] = None) -> int:
-        """
-        Gets batch size for a specific model or global default.
-
-        Args:
-            model_name (Optional[str]): Model name for specific batch size.
-
-        Returns:
-            int: Batch size to use.
-        """
-        if model_name:
-            return ConfigLoader.get(
-                f"models.{model_name}.batch_size",
-                ConfigLoader.get("processing.batch_size", 1),
-            )
-        return ConfigLoader.get("processing.batch_size", 1)
-
-    @classmethod
-    def get_max_length(cls, model_name: Optional[str] = None) -> int:
-        """
-        Gets max length for a specific model or global default.
-
-        Args:
-            model_name (Optional[str]): Model name for specific max length.
-
-        Returns:
-            int: Max length to use.
-        """
-        if model_name:
-            return ConfigLoader.get(
-                f"models.{model_name}.max_length",
-                ConfigLoader.get("processing.max_length", 512),
-            )
-        return ConfigLoader.get("processing.max_length", 512)
-
-    @classmethod
-    def get_timeout(cls, model_name: str) -> int:
-        """
-        Gets timeout value for a specific model.
-
-        Args:
-            model_name (str): Name of the model.
-
-        Returns:
-            int: Timeout in seconds.
-        """
-        return ConfigLoader.get(f"models.{model_name}.timeout", 30)
-
-    @classmethod
-    def get_known_values(cls) -> Dict[str, List[str]]:
-        """
-        Gets dictionary of known values for entity matching.
-
-        Returns:
-            Dict[str, List[str]]: Known values by category.
-        """
-        return ConfigLoader.get("known_values", {})
-
-    @classmethod
-    def get_date_formats(cls) -> List[str]:
-        """
-        Gets list of supported date formats.
-
-        Returns:
-            List[str]: Supported date format strings.
-        """
-        return ConfigLoader.get("date_formats", [])
-
-    @classmethod
-    def get_boolean_values(cls) -> Dict[str, List[str]]:
-        """
-        Gets mappings for boolean value recognition.
-
-        Returns:
-            Dict[str, List[str]]: Boolean value mappings.
-        """
-        return ConfigLoader.get("boolean_values", {})
-
-    @classmethod
     def get_valid_extensions(cls) -> List[str]:
-        """
-        Gets list of valid file extensions.
-
-        Returns:
-            List[str]: Valid file extensions.
-        """
-        return ConfigLoader.get("valid_extensions", [])
+        """Retrieve valid file extensions from the configuration."""
+        return cls.get_full_config().get("valid_extensions", [".pdf", ".jpg", ".png"])
 
     @classmethod
     def get_data_points(cls) -> Dict[str, Any]:
-        """
-        Retrieves the 'data_points' from the configuration.
-
-        Returns:
-            Dict[str, Any]: The 'data_points' configuration.
-        """
-        return ConfigLoader.get("data_points", {})
+        """Retrieve data points from the configuration."""
+        return cls.get_full_config().get("data_points", {})
 
     @classmethod
-    def get_fuzzy_threshold(cls) -> int:
-        """
-        Gets fuzzy matching threshold.
-
-        Returns:
-            int: Threshold value for fuzzy matching.
-        """
-        return ConfigLoader.get("fuzzy_threshold", 90)
-
-    @classmethod
-    def is_amp_enabled(cls) -> bool:
-        """
-        Checks if Automatic Mixed Precision is enabled.
-
-        Returns:
-            bool: True if AMP is enabled.
-        """
-        return ConfigLoader.get("enable_amp", False)
-
-    @classmethod
-    def should_optimize_memory(cls) -> bool:
-        """
-        Checks if memory optimization is enabled.
-
-        Returns:
-            bool: True if memory optimization is enabled.
-        """
-        return ConfigLoader.get("optimize_memory", False)
-
-    @classmethod
-    def get_logging_config(cls) -> Dict[str, Any]:
-        """
-        Gets complete logging configuration.
-
-        Returns:
-            Dict[str, Any]: Logging configuration.
-        """
-        return ConfigLoader.get("logging", {})
-
-    @classmethod
-    def get_log_level(cls) -> str:
-        """
-        Gets configured logging level.
-
-        Returns:
-            str: Logging level.
-        """
-        return ConfigLoader.get("logging.level", "DEBUG")
-
-    @classmethod
-    def should_fallback_to_cpu(cls) -> bool:
-        """
-        Checks if CPU fallback is enabled.
-
-        Returns:
-            bool: True if CPU fallback is enabled.
-        """
-        return ConfigLoader.get("processing.fallback_to_cpu", True)
+    def should_validate_schema(cls) -> bool:
+        """Check if schema validation is enabled."""
+        schema_config = cls.get_full_config().get("schema", {})
+        return schema_config.get("validate_input", True) or schema_config.get(
+            "validate_output", True
+        )

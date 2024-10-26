@@ -1,4 +1,4 @@
-# src/parsers/base_parser.py
+# src\parsers\base_parser.py
 
 import logging
 from typing import Any, Dict, Optional, Union
@@ -27,9 +27,9 @@ class BaseParser:
             self.device = Config.get_device()
             self.fallback_to_cpu = Config.should_fallback_to_cpu()
             
-            # Set up optimization flags
-            self.enable_amp = Config.is_amp_enabled()
-            self.optimize_memory = Config.should_optimize_memory()
+            # Set up optimization flags (if they exist in the config)
+            self.enable_amp = processing_config.get("enable_amp", False)  # Enable AMP (Automatic Mixed Precision)
+            self.optimize_memory = processing_config.get("optimize_memory", True)  # Memory optimization flag
             
         except Exception as e:
             self.logger.error(f"Failed to set up base configuration: {e}", exc_info=True)

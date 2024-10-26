@@ -1,3 +1,5 @@
+# src/utils/validation.py
+
 from src.utils.config import Config
 from jsonschema import Draft7Validator, validators
 from transformers import pipeline
@@ -5,6 +7,8 @@ import logging
 from typing import Optional, Tuple, List, Dict, Any
 import torch
 import re
+
+from .exceptions import ValidationError
 
 # Define constants for repeated strings
 REQUESTING_PARTY = "Requesting Party"
@@ -25,8 +29,11 @@ logger.setLevel(logging.DEBUG)
 handler = logging.StreamHandler()
 formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 handler.setFormatter(formatter)
-logger.addHandler(handler)
+if not logger.handlers:
+    logger.addHandler(handler)
 
+# Load the schema from quickbase_schema.py
+from .quickbase_schema import QUICKBASE_SCHEMA
 
 def init_validation_model(
     logger: logging.Logger,
@@ -70,7 +77,6 @@ def init_validation_model(
         logger.error("Failed to initialize validation model: %s", e, exc_info=True)
         return None
 
-
 def extend_with_default(validator_class):
     validate_properties = validator_class.VALIDATORS["properties"]
 
@@ -91,7 +97,6 @@ def extend_with_default(validator_class):
         validator_class,
         {"properties": set_defaults},
     )
-
 
 DefaultValidatingDraft7Validator = extend_with_default(Draft7Validator)
 
@@ -307,7 +312,6 @@ assignment_schema = {
     },
 }
 
-
 def validate_schema(parsed_data: dict) -> List[str]:
     """
     Validate parsed data against the JSON schema.
@@ -329,7 +333,6 @@ def validate_schema(parsed_data: dict) -> List[str]:
         logger.warning("Schema validation issue: %s", message)
 
     return error_messages
-
 
 def validate_field_formats(parsed_data: dict) -> List[str]:
     """
@@ -355,14 +358,11 @@ def validate_field_formats(parsed_data: dict) -> List[str]:
     adjuster_emails = adjuster_info.get(ADJUSTER_EMAIL, []) or []
     for idx, email in enumerate(adjuster_emails):
         if not email_pattern.match(email):
-            message = (
-                f"{ADJUSTER_INFORMATION}.{ADJUSTER_EMAIL}[{idx}]: Invalid email format."
-            )
+            message = f"{ADJUSTER_INFORMATION}.{ADJUSTER_EMAIL}[{idx}]: Invalid email format."
             error_messages.append(message)
             logger.warning(message)
 
     return error_messages
-
 
 def validate_dependencies(parsed_data: dict) -> List[str]:
     """
@@ -398,7 +398,6 @@ def validate_dependencies(parsed_data: dict) -> List[str]:
             logger.warning(message)
 
     return error_messages
-
 
 def validate_json(parsed_data: dict) -> Tuple[bool, str]:
     """
@@ -456,7 +455,6 @@ def validate_json(parsed_data: dict) -> Tuple[bool, str]:
     )
     return True, ""
 
-
 def sanitize_parsed_data(parsed_data: dict) -> dict:
     """
     Sanitize the parsed data by removing nulls and empty values.
@@ -481,7 +479,6 @@ def sanitize_parsed_data(parsed_data: dict) -> dict:
     logger.debug("Sanitized parsed data by removing nulls and empty values.")
     return sanitized_data
 
-
 def get_missing_required_fields(parsed_data: dict) -> List[str]:
     """
     Retrieve a list of missing required fields from the parsed data.
@@ -502,7 +499,6 @@ def get_missing_required_fields(parsed_data: dict) -> List[str]:
         logger.warning(f"Missing required field: {field}")
     return missing_fields
 
-
 def get_inconsistent_fields(parsed_data: dict) -> List[str]:
     """
     Retrieve a list of inconsistent fields from the parsed data.
@@ -514,9 +510,22 @@ def get_inconsistent_fields(parsed_data: dict) -> List[str]:
         List[str]: List of inconsistent fields.
     """
     inconsistent_fields = []
-    # Implement logic for detecting inconsistent fields if any
-    return inconsistent_fields
+    # Example implementation: Check if boolean fields are consistent
+    assignment_info = parsed_data.get(ASSIGNMENT_INFORMATION, {})
+    type_info = parsed_data.get(ASSIGNMENT_TYPE, {})
 
+    # Example consistency check: If "Other" is True, "Details" must be provided
+    other_info = type_info.get("Other", [])
+    for idx, item in enumerate(other_info):
+        if isinstance(item, dict):
+            checked = item.get("Checked")
+            details = item.get("Details", "")
+            if checked and not details:
+                message = f"Assignment Type.Other[{idx}].Details must be provided when Checked is True."
+                inconsistent_fields.append(message)
+                logger.warning(message)
+
+    return inconsistent_fields
 
 def collect_user_notifications(parsed_data: dict) -> List[str]:
     """
@@ -533,34 +542,6 @@ def collect_user_notifications(parsed_data: dict) -> List[str]:
         notifications.append("Summary of services needed is missing.")
         logger.info("User notification added: Summary of services needed is missing.")
     return notifications
-
-
-def final_validation(parsed_data: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Perform the final validation and augment the parsed data with validation results.
-
-    Args:
-        parsed_data (Dict[str, Any]): The data to validate.
-
-    Returns:
-        Dict[str, Any]: The validated and augmented data.
-    """
-    try:
-        logger.info("Performing final validation pass.")
-        is_valid, errors = validate_json(parsed_data)
-
-        validated_data = parsed_data.copy()
-        validated_data["missing_fields"] = get_missing_required_fields(parsed_data)
-        validated_data["inconsistent_fields"] = get_inconsistent_fields(parsed_data)
-        validated_data["low_confidence_fields"] = get_low_confidence_fields(parsed_data)
-        validated_data["validation_errors"] = errors.split("\n") if not is_valid else []
-
-        logger.info("Final validation completed.")
-        return validated_data
-    except Exception as e:
-        logger.error("Error during final validation: %s", e, exc_info=True)
-        return parsed_data
-
 
 def get_low_confidence_fields(
     parsed_data: Dict[str, Any], threshold: float = 0.7
@@ -586,3 +567,31 @@ def get_low_confidence_fields(
                                 low_confidence_fields.append(f"{section}.{field}")
                                 break
     return low_confidence_fields
+
+def final_validation(parsed_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Perform the final validation and augment the parsed data with validation results.
+
+    Args:
+        parsed_data (Dict[str, Any]): The data to validate.
+
+    Returns:
+        Dict[str, Any]: The validated and augmented data.
+    """
+    try:
+        logger.info("Performing final validation pass.")
+        is_valid, errors = validate_json(parsed_data)
+
+        validated_data = parsed_data.copy()
+        validated_data["missing_fields"] = get_missing_required_fields(parsed_data)
+        validated_data["inconsistent_fields"] = get_inconsistent_fields(parsed_data)
+        validated_data["low_confidence_fields"] = get_low_confidence_fields(parsed_data)
+        validated_data["validation_errors"] = errors.split("\n") if not is_valid else []
+
+        validated_data["user_notifications"] = collect_user_notifications(validated_data)
+
+        logger.info("Final validation completed.")
+        return validated_data
+    except Exception as e:
+        logger.error("Error during final validation: %s", e, exc_info=True)
+        return parsed_data
