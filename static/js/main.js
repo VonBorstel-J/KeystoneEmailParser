@@ -1,18 +1,16 @@
 // static/js/main.js
-import React from 'react';
-import ReactDOM from 'react-dom';
-import socketManager from './core/socket.js';
-import Parser from './core/parser.js';
-import ValidationManager from './core/validation.js';
-import Toast from '../components/common/Toast.jsx';
-import Modal from '../components/common/Modal.jsx';
-import themeManager from './ui/theme.js';
-import ParsingOverlay from '../components/ParsingOverlay/index.jsx';
-import { formatJSON, toCSV } from './utils/format.js';
-import { getElement, createElement, debounce } from './utils/dom.js';
-import { setSocketConnected, setSocketDisconnected, setSocketError } from './actions/socketActions.js';
-import socketReducer from './reducers/socketReducer.js';
-import { escapeHtml, renderHumanReadable, capitalize, escapeRegExp } from './utils/html.js';
+import socketManager from '@core/socket.js';
+import Parser from '@core/parser.js';
+import ValidationManager from '@core/validation.js';
+import Toast from '@components/common/Toast.jsx';
+import Modal from '@components/common/Modal.jsx';
+import themeManager from '@ui/theme.js';
+import ParsingOverlay from '@components/ParsingOverlay/index.jsx';
+import { formatJSON, toCSV } from '@utils/format.js';
+import { getElement, createElement, debounce } from '@utils/dom.js';
+import { setSocketConnected, setSocketDisconnected, setSocketError } from '@actions/socketActions.js';
+import socketReducer from '@reducers/socketReducer.js';
+import { escapeHtml, renderHumanReadable, capitalize, escapeRegExp } from '@utils/html.js';
 
 // Initialize Socket Manager
 const socket = socketManager.getSocket();

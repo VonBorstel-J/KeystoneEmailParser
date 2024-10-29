@@ -5,11 +5,13 @@
   "main": "static/js/main.js",
   "scripts": {
     "start": "webpack serve --mode development",
-    "build": "webpack --mode production",
-    "watch": "webpack --watch --mode development"
+    "build": "webpack --mode development",
+    "watch": "webpack --watch --mode development",
+    "clean": "rimraf static/dist/*"
   },
   "dependencies": {
     "@babel/runtime": "^7.22.5",
+    "@headlessui/react": "^2.2.0",
     "@reduxjs/toolkit": "^1.9.5",
     "file-saver": "^2.0.5",
     "jspdf": "^2.5.2",
@@ -30,19 +32,19 @@
     "tailwindcss": "^3.3.2"
   },
   "devDependencies": {
-    "@babel/core": "^7.22.5",
+    "@babel/core": "^7.26.0",
     "@babel/plugin-proposal-class-properties": "^7.18.6",
     "@babel/plugin-transform-runtime": "^7.22.5",
-    "@babel/preset-env": "^7.22.5",
+    "@babel/preset-env": "^7.26.0",
     "@babel/preset-react": "^7.25.9",
     "autoprefixer": "^10.4.14",
-    "babel-loader": "^9.1.2",
-    "css-loader": "^6.8.1",
+    "babel-loader": "^9.2.1",
+    "css-loader": "^6.11.0",
     "postcss": "^8.4.24",
     "postcss-loader": "^7.3.2",
-    "style-loader": "^3.3.3",
-    "webpack": "^5.85.0",
-    "webpack-cli": "^5.1.1",
+    "style-loader": "^3.3.4",
+    "webpack": "^5.95.0",
+    "webpack-cli": "^5.1.4",
     "webpack-dev-server": "^4.15.0"
   }
 }
