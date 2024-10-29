@@ -1,515 +1,249 @@
 <!-- templates/index.html -->
-<!doctype html>
-<html lang="en" data-theme="light">
+<!DOCTYPE html>
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta
-      name="description"
-      content="A demo application for parsing emails using various parser options."
-    />
-    <meta name="keywords" content="Email Parser, Demo, JSON, PDF, CSV, LLM" />
-    <meta name="author" content="Your Company Name" />
-    <title>Email Parser Demo</title>
+    <title>Email Parser Pro</title>
 
-    <!-- Preconnect to External Resources for Improved Performance -->
-    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
-    <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin />
-    <link rel="preconnect" href="https://fonts.googleapis.com" crossorigin />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <!-- Tailwind CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet" />
 
-    <!-- Bootstrap CSS -->
-    <link
-      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css"
-      rel="stylesheet"
-      crossorigin="anonymous"
-    />
+    <!-- PrismJS for JSON Syntax Highlighting -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.25.0/themes/prism.min.css" rel="stylesheet" />
 
-    <!-- PrismJS CSS for Syntax Highlighting -->
-    <link
-      href="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism.min.css"
-      rel="stylesheet"
-      crossorigin="anonymous"
-    />
-
-    <!-- Google Fonts -->
-    <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fira+Code&display=swap"
-      rel="stylesheet"
-    />
-
-    <!-- Custom Styles -->
-    <link
-      rel="stylesheet"
-      href="{{ url_for('static', filename='css/styles.css') }}"
-    />
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
 
     <!-- Lottie Animations -->
-    <script
-      src="https://cdnjs.cloudflare.com/ajax/libs/lottie-web/5.12.2/lottie.min.js"
-      defer
-      crossorigin="anonymous"
-    ></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/bodymovin/5.7.6/lottie.min.js" integrity="sha512-0GwnhG8Gp1pt/vMgNJw2upBaLdvwSbV6GmXewzbk1jGm6DQfZ3QzxgKILugrYmdk8/hhM6Y+zVBAkKDeRMUYxg==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 
-    <!-- jsPDF Library -->
-    <script
-      src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"
-      defer
-      crossorigin="anonymous"
-    ></script>
+    <!-- JSZip and jsPDF for PDF Generation -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" integrity="sha512-BVTzu9BGzZODuPPtCY8Tsv2UdWnrgkX7eZbwp39U5EmR5dZIR2FOwRtV0Z0B6Ee4UK69hePxxg0Jr7fqAi9r9A==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+
+    <!-- Socket.IO -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.5.4/socket.io.min.js" integrity="sha512-A8Iw7T+0c0+gQ0bEoQ+FRCiIT6V0s1sJ3uC9D+jIb0O4wUyjgUZS0UXEcth4HV5JOPv7lzEfl4p/PZAzmLeYpg==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+
+    <!-- React and ReactDOM (Production Builds) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/17.0.2/umd/react.production.min.js" crossorigin></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/17.0.2/umd/react-dom.production.min.js" crossorigin></script>
+
+    <!-- Core Styles -->
+    <link rel="stylesheet" href="/static/css/styles.css" />
+    <link rel="stylesheet" href="/static/components/ParsingOverlay/styles.css" />
+    <link rel="stylesheet" href="/static/components/ResultViewer/styles.css" />
+    <link rel="stylesheet" href="/static/components/common/styles.css" />
+    <link rel="stylesheet" href="/static/css/utilities.css" />
   </head>
-
-  <body>
+  <body class="bg-gray-50 min-h-screen">
     <!-- Header -->
     <header>
-      <!-- Navbar -->
-      <nav class="navbar navbar-expand-lg navbar-light bg-light">
-        <div class="container-fluid">
-          <a class="navbar__brand" href="#">Email Parser Demo</a>
-          <button
-            class="navbar-toggler"
-            type="button"
-            data-bs-toggle="collapse"
-            data-bs-target="#navbarSupportedContent"
-            aria-controls="navbarSupportedContent"
-            aria-expanded="false"
-            aria-label="Toggle navigation"
-          >
-            <span class="navbar-toggler-icon"></span>
-          </button>
-          <div
-            class="collapse navbar-collapse justify-content-end"
-            id="navbarSupportedContent"
-          >
-            <button
-              class="btn btn-outline-secondary me-2"
-              id="theme-toggle-btn"
-              aria-label="Toggle Theme"
-            >
-              <span id="theme-icon">🌙</span>
-            </button>
-            <button
-              type="button"
-              class="btn btn-info"
-              data-bs-toggle="modal"
-              data-bs-target="#helpModal"
-              aria-label="Open Help Modal"
-            >
-              Help
-            </button>
+      <nav class="bg-white shadow-md">
+        <div class="max-w-7xl mx-auto px-4 py-3">
+          <div class="flex justify-between items-center">
+            <div class="flex items-center space-x-3">
+              <svg class="h-8 w-8 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+              </svg>
+              <h1 class="text-xl font-semibold text-gray-900">Email Parser Pro</h1>
+            </div>
+            <div class="flex items-center space-x-4">
+              <button id="theme-toggle" class="p-2 rounded-lg hover:bg-gray-100" aria-label="Toggle Theme"><span id="theme-icon">🌙</span></button>
+              <button id="help-button" class="p-2 rounded-lg hover:bg-gray-100" aria-label="Help">
+                <svg class="h-6 w-6 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </button>
+            </div>
           </div>
         </div>
       </nav>
     </header>
 
     <!-- Main Content -->
-    <main class="container mt-4 mb-5">
-      <div class="row">
+    <main class="max-w-7xl mx-auto px-4 py-8">
+      <section class="grid grid-cols-1 lg:grid-cols-2 gap-8">
         <!-- Input Section -->
-        <section class="col-lg-6 mb-4">
-          <div class="card">
-            <header class="card__header">
-              <h5 class="card__title mb-0">Input</h5>
-            </header>
-            <div class="card__body">
-              <form
-                id="parserForm"
-                method="POST"
-                action="/parse_email"
-                enctype="multipart/form-data"
-                novalidate
-              >
-                <!-- Sample Inputs Buttons -->
-                <div class="mb-3">
-                  <label class="form-label">Load a sample email:</label>
-                  <div>
-                    <button
-                      type="button"
-                      class="btn btn-sm btn-outline-primary me-2 sample-btn"
-                      data-template="claim"
-                      aria-label="Load Formal Claim Email"
-                    >
-                      Formal Claim Email
-                    </button>
-                    <button
-                      type="button"
-                      class="btn btn-sm btn-outline-primary me-2 sample-btn"
-                      data-template="informal_claim"
-                      aria-label="Load Informal Claim Email"
-                    >
-                      Informal Claim Email
-                    </button>
-                    <button
-                      type="button"
-                      class="btn btn-sm btn-outline-primary me-2 sample-btn"
-                      data-template="formal_fire_claim"
-                      aria-label="Load Formal Fire Claim Email"
-                    >
-                      Formal Fire Claim Email
-                    </button>
+        <article class="space-y-6">
+          <div class="bg-white rounded-xl shadow-sm p-6">
+            <h2 class="text-lg font-semibold text-gray-900 mb-4">Input Options</h2>
+            <form id="parserForm">
+              <div class="space-y-4">
+                <!-- Sample Email Buttons -->
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 mb-2">Load Sample Email</label>
+                  <div class="flex flex-wrap gap-2">
+                    <button type="button" class="sample-btn px-4 py-2 text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700" data-template="claim">Formal Claim</button>
+                    <button type="button" class="sample-btn px-4 py-2 text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700" data-template="informal_claim">Informal Claim</button>
+                    <button type="button" class="sample-btn px-4 py-2 text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700" data-template="formal_fire_claim">Fire Claim</button>
                   </div>
                 </div>
 
-                <!-- Email Content -->
-                <div class="mb-3 position-relative">
-                  <label for="email_content" class="form-label"
-                    >Email Content</label
-                  >
-                  <small class="text-muted float-end" id="char_count"
-                    >0 characters</small
-                  >
-                  <textarea
-                    class="form__textarea form-control"
-                    id="email_content"
-                    name="email_content"
-                    rows="10"
-                    required
-                    aria-required="true"
-                    aria-describedby="char_count"
-                  ></textarea>
-                  <div class="invalid-feedback">
-                    Please enter the email content to parse.
+                <!-- Email Content Input -->
+                <div>
+                  <label for="email_content" class="block text-sm font-medium text-gray-700 mb-2">Email Content <span class="text-red-500">*</span></label>
+                  <div class="relative">
+                    <textarea id="email_content" name="email_content" rows="12" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm resize-none" placeholder="Paste your email content here..." required></textarea>
+                    <div class="absolute bottom-2 right-2 text-xs text-gray-500" id="char_count">0 characters</div>
+                    <p class="mt-1 text-sm text-red-600 hidden" id="email_content_error">Email content is required.</p>
                   </div>
                 </div>
 
-                <!-- Document Image -->
-                <div class="mb-3">
-                  <label for="document_image" class="form-label"
-                    >Document Image (Optional)</label
-                  >
-                  <input
-                    type="file"
-                    class="form__control form-control"
-                    id="document_image"
-                    name="document_image"
-                    accept="image/*"
-                    aria-describedby="documentHelp"
-                  />
-                  <div id="documentHelp" class="form-text">
-                    Upload an image of a document to include in the parsing.
+                <!-- Document Upload -->
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 mb-2">Document Image (Optional)</label>
+                  <div class="mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-gray-300 border-dashed rounded-md">
+                    <div class="space-y-1 text-center">
+                      <svg class="mx-auto h-12 w-12 text-gray-400" stroke="currentColor" fill="none" viewBox="0 0 48 48" aria-hidden="true">
+                        <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8m-12 4h.02" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                      </svg>
+                      <div class="flex text-sm text-gray-600">
+                        <label for="document_image" class="relative cursor-pointer rounded-md font-medium text-indigo-600 hover:text-indigo-500">
+                          <span>Upload a file</span>
+                          <input id="document_image" name="document_image" type="file" class="sr-only" accept="image/*" />
+                        </label>
+                        <p class="pl-1">or drag and drop</p>
+                      </div>
+                      <p class="text-xs text-gray-500">PNG, JPG, GIF up to 10MB</p>
+                      <p class="mt-1 text-sm text-red-600 hidden" id="document_image_error">Invalid file type or size.</p>
+                    </div>
                   </div>
                 </div>
 
-                <!-- Parser Option -->
-                <div class="mb-3">
-                  <label for="parser_option" class="form-label"
-                    >Parser Option</label
-                  >
-                  <select
-                    class="form__select form-select"
-                    id="parser_option"
-                    name="parser_option"
-                    required
-                    aria-required="true"
-                  >
+                <!-- Parser Options -->
+                <div>
+                  <label for="parser_option" class="block text-sm font-medium text-gray-700 mb-2">Parser Option <span class="text-red-500">*</span></label>
+                  <select id="parser_option" name="parser_option" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm" required>
                     <option value="">Select a parser option...</option>
-                    <option
-                      value="enhanced_parser"
-                      title="Uses the enhanced parsing strategy for best accuracy."
-                    >
-                      Enhanced Parser
-                    </option>
-                    <!-- Additional parser options can be added here in the future -->
+                    <option value="enhanced_parser">Enhanced Parser</option>
                   </select>
-                  <div class="invalid-feedback">
-                    Please select a parser option.
-                  </div>
+                  <p class="mt-1 text-sm text-red-600 hidden" id="parser_option_error">Please select a parser option.</p>
                 </div>
 
-                <!-- Submit Button -->
-                <button
-                  type="submit"
-                  class="btn--primary w-100"
-                  aria-label="Parse Email"
-                  id="submitButton"
-                >
-                  Parse Email
-                </button>
-              </form>
-            </div>
+                <!-- Parse Button -->
+                <button type="submit" id="submitButton" class="w-full flex justify-center py-3 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500" disabled>Parse Email</button>
+              </div>
+            </form>
           </div>
-        </section>
+        </article>
 
-        <!-- Parsed Data Section -->
-        <section class="col-lg-6">
-          <div class="card">
-            <header class="card__header">
-              <h5 class="card__title mb-0">Parsed Data</h5>
-            </header>
-            <div class="card__body">
-              <!-- Tab Navigation -->
-              <ul class="nav nav-tabs" id="parsedDataTabs" role="tablist">
-                <li class="nav-item" role="presentation">
-                  <button
-                    class="nav-link active"
-                    id="json-tab"
-                    data-bs-toggle="tab"
-                    data-bs-target="#jsonOutputTab"
-                    type="button"
-                    role="tab"
-                    aria-controls="jsonOutputTab"
-                    aria-selected="true"
-                  >
-                    JSON
+        <!-- Output Section -->
+        <article class="space-y-6">
+          <div class="bg-white rounded-xl shadow-sm p-6">
+            <h2 class="text-lg font-semibold text-gray-900 mb-4">Parsed Results</h2>
+
+            <!-- Results Tabs -->
+            <div class="border-b border-gray-200">
+              <nav class="-mb-px flex space-x-8" aria-label="Tabs">
+                <button id="json-tab" class="tab-btn border-indigo-500 text-indigo-600 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm active" role="tab" aria-selected="true" aria-controls="jsonOutputTab">JSON</button>
+                <button id="human-tab" class="tab-btn border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm" role="tab" aria-selected="false" aria-controls="humanOutputTab">Human-Readable</button>
+                <button id="original-tab" class="tab-btn border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm" role="tab" aria-selected="false" aria-controls="originalEmailTab">Original</button>
+              </nav>
+            </div>
+
+            <!-- Results Content -->
+            <div class="mt-4">
+              <div id="jsonOutputTab" class="tab-content" role="tabpanel" aria-labelledby="json-tab">
+                <div class="relative">
+                  <button id="copyResultsBtn" class="absolute top-2 right-2 p-2 text-gray-500 hover:text-gray-700" aria-label="Copy Results">
+                    <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                    </svg>
                   </button>
-                </li>
-                <li class="nav-item" role="presentation">
-                  <button
-                    class="nav-link"
-                    id="human-tab"
-                    data-bs-toggle="tab"
-                    data-bs-target="#humanOutputTab"
-                    type="button"
-                    role="tab"
-                    aria-controls="humanOutputTab"
-                    aria-selected="false"
-                  >
-                    Human-Readable
-                  </button>
-                </li>
-                <li class="nav-item" role="presentation">
-                  <button
-                    class="nav-link"
-                    id="original-tab"
-                    data-bs-toggle="tab"
-                    data-bs-target="#originalEmailTab"
-                    type="button"
-                    role="tab"
-                    aria-controls="originalEmailTab"
-                    aria-selected="false"
-                  >
-                    Original Email
-                  </button>
-                </li>
-              </ul>
-
-              <div class="tab-content mt-3" id="parsedDataTabsContent">
-                <!-- JSON Output Tab -->
-                <div
-                  class="tab-pane fade show active"
-                  id="jsonOutputTab"
-                  role="tabpanel"
-                  aria-labelledby="json-tab"
-                >
-                  <div
-                    id="parsedOutput"
-                    class="parsed-output position-relative"
-                  >
-                    <button
-                      class="copy-button"
-                      id="copyResultsBtn"
-                      title="Copy results"
-                      aria-label="Copy Parsed Results"
-                      type="button"
-                    >
-                      📋 Copy
-                    </button>
-                    <pre><code class="language-json" id="jsonOutput"></code></pre>
-                  </div>
-                </div>
-
-                <!-- Human-Readable Output Tab -->
-                <div
-                  class="tab-pane fade"
-                  id="humanOutputTab"
-                  role="tabpanel"
-                  aria-labelledby="human-tab"
-                >
-                  <div id="humanOutput" class="parsed-human-readable"></div>
-                </div>
-
-                <!-- Original Email Tab -->
-                <div
-                  class="tab-pane fade"
-                  id="originalEmailTab"
-                  role="tabpanel"
-                  aria-labelledby="original-tab"
-                >
-                  <div id="originalEmail" class="original-email-content"></div>
+                  <pre id="jsonOutput" class="block h-[500px] overflow-auto bg-gray-50 rounded-md p-4 text-sm font-mono"></pre>
                 </div>
               </div>
-
-              <!-- Error and Success Messages -->
-              <div
-                id="errorMessage"
-                class="alert alert--danger mt-3 d-none"
-                role="alert"
-                aria-live="assertive"
-              >
-                <!-- Error content will be injected here -->
+              <div id="humanOutputTab" class="tab-content hidden" role="tabpanel" aria-labelledby="human-tab">
+                <div id="humanOutput" class="prose max-w-none"></div>
               </div>
-              <div
-                id="successMessage"
-                class="alert alert--success mt-3 d-none"
-                role="alert"
-                aria-live="assertive"
-              >
-                <!-- Success content will be injected here -->
-              </div>
-
-              <!-- Download Buttons -->
-              <div class="mt-3 d-flex">
-                <button
-                  id="downloadCsvBtn"
-                  class="btn btn-secondary d-none me-2"
-                  aria-label="Download CSV"
-                >
-                  Download CSV
-                </button>
-                <button
-                  id="downloadPdfBtn"
-                  class="btn btn-secondary d-none"
-                  aria-label="Download PDF"
-                >
-                  Download PDF
-                </button>
+              <div id="originalEmailTab" class="tab-content hidden" role="tabpanel" aria-labelledby="original-tab">
+                <div id="originalEmail" class="font-mono text-sm whitespace-pre-wrap"></div>
               </div>
             </div>
-          </div>
-        </section>
-      </div>
 
-      <!-- Highlighted Email Section -->
-      <div class="row">
-        <section class="col-12">
-          <div class="card">
-            <header class="card__header">
-              <h5 class="card__title mb-0">Highlighted Email</h5>
-            </header>
-            <div class="card__body">
-              <div id="highlightedEmail" class="highlighted-email-content">
-                <!-- Original email content with highlighted parsed entities will appear here -->
-              </div>
+            <!-- Download Options -->
+            <div class="mt-4 flex space-x-4">
+              <button id="downloadCsvBtn" class="flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 hidden" aria-label="Download CSV">
+                <svg class="mr-2 h-5 w-5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>Download CSV
+              </button>
+              <button id="downloadPdfBtn" class="flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 hidden" aria-label="Download PDF">
+                <svg class="mr-2 h-5 w-5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>Download PDF
+              </button>
             </div>
           </div>
-        </section>
-      </div>
+        </article>
+      </section>
     </main>
 
-    <!-- Loading Overlay -->
-    <div
-      class="loading-overlay d-none"
-      role="alert"
-      aria-live="assertive"
-      aria-label="Loading"
-    >
-      <div
-        id="lottie-container"
-        class="loading-animation"
-        aria-hidden="true"
-      ></div>
-      <div class="loading-overlay__message" id="loading-message">
-        Loading...
+    <!-- Overlay Root for React Components -->
+    <div id="parsingOverlayRoot"></div>
+
+    <!-- Help Modal (Non-React) -->
+    <div id="helpModal" class="hidden fixed inset-0 bg-gray-500 bg-opacity-75 flex items-center justify-center z-50" role="dialog" aria-modal="true" aria-labelledby="helpModalTitle">
+      <div class="bg-white dark:bg-gray-900 rounded-lg max-w-2xl w-full mx-4">
+        <header class="px-6 py-4 border-b border-gray-200">
+          <h3 id="helpModalTitle" class="text-lg font-medium text-gray-900">How to Use Email Parser Pro</h3>
+        </header>
+        <div class="px-6 py-4">
+          <div class="prose">
+            <p>Welcome to Email Parser Pro! Follow these steps to parse your emails:</p>
+            <ol>
+              <li>Choose a sample email or paste your own content in the text area</li>
+              <li>Optionally upload a related document image</li>
+              <li>Select a parser option from the dropdown</li>
+              <li>Click "Parse Email" to start the process</li>
+              <li>View the results in JSON, human-readable, or original format</li>
+              <li>Download the results in CSV or PDF format if needed</li>
+            </ol>
+            <h4>Features:</h4>
+            <ul>
+              <li>Real-time parsing progress visualization</li>
+              <li>Support for document images</li>
+              <li>Multiple output formats</li>
+              <li>Export capabilities</li>
+              <li>Dark mode support</li>
+            </ul>
+            <p>For additional support or questions, please contact our support team.</p>
+          </div>
+        </div>
+        <footer class="px-6 py-4 border-t border-gray-200 flex justify-end">
+          <button id="closeHelpBtn" class="px-4 py-2 bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200" aria-label="Close Help Modal">Close</button>
+        </footer>
       </div>
-      <div class="loading-overlay__progress">
-        <div class="loading-overlay__progress-bar" id="progress-bar"></div>
+    </div>
+
+    <!-- Loading State -->
+    <div id="loadingOverlay" class="hidden fixed inset-0 bg-gray-900 bg-opacity-50 backdrop-blur-sm flex flex-col items-center justify-center z-50" role="alert" aria-live="assertive">
+      <div class="relative w-32 h-32">
+        <div class="w-32 h-32 border-8 border-indigo-200 rounded-full"></div>
+        <div class="absolute top-0 left-0 w-32 h-32 border-8 border-indigo-600 rounded-full animate-spin" style="border-top-color: transparent"></div>
+      </div>
+      <div class="mt-4 text-white text-lg font-medium loading-message" id="loadingMessage">Processing...</div>
+      <div class="mt-4 w-64 h-2 bg-gray-200 rounded-full overflow-hidden">
+        <div id="progress-bar" class="h-full bg-indigo-600 rounded-full transition-all duration-300" style="width: 0%"></div>
       </div>
     </div>
 
     <!-- Success Animation -->
-    <div
-      class="success-animation d-none"
-      id="success-animation"
-      aria-hidden="true"
-    ></div>
-
-    <!-- Help Modal -->
-    <div
-      class="modal fade"
-      id="helpModal"
-      tabindex="-1"
-      aria-labelledby="helpModalLabel"
-      aria-hidden="true"
-    >
-      <div class="modal-dialog modal-lg">
-        <div class="modal-content">
-          <header class="modal-header">
-            <h5 class="modal-title" id="helpModalLabel">
-              How to Use Email Parser
-            </h5>
-            <button
-              type="button"
-              class="btn-close"
-              data-bs-dismiss="modal"
-              aria-label="Close Help Modal"
-            ></button>
-          </header>
-          <div class="modal-body">
-            <p>Welcome to the Email Parser Demo! Here's how to get started:</p>
-            <ol>
-              <li>
-                <strong>Load a Sample Email:</strong> Use the buttons above to
-                load predefined email templates.
-              </li>
-              <li>
-                <strong>Input Email Content:</strong> If you prefer, you can
-                manually enter or paste your email content into the textarea.
-              </li>
-              <li>
-                <strong>Select Parser Option:</strong> Choose the parsing method
-                that best suits your needs.
-              </li>
-              <li>
-                <strong>Parse Email:</strong> Click the "Parse Email" button to
-                process your input.
-              </li>
-              <li>
-                <strong>View Results:</strong> The parsed data will appear in
-                the right section. You can switch between JSON and a
-                human-readable format, copy the results, or download them as
-                CSV/PDF.
-              </li>
-            </ol>
-            <p>
-              If you encounter any issues, please refer to the FAQs or contact
-              support.
-            </p>
-          </div>
-          <footer class="modal-footer">
-            <button
-              type="button"
-              class="btn btn-secondary"
-              data-bs-dismiss="modal"
-              aria-label="Close Help Modal"
-            >
-              Close
-            </button>
-          </footer>
+    <div id="success-animation" class="hidden fixed inset-0 bg-white bg-opacity-75 backdrop-blur-sm flex items-center justify-center z-50" role="status" aria-live="polite">
+      <div class="success-checkmark">
+        <div class="check-icon">
+          <span class="icon-line line-tip"></span>
+          <span class="icon-line line-long"></span>
+          <div class="icon-circle"></div>
+          <div class="icon-fix"></div>
         </div>
       </div>
     </div>
 
-    <!-- Footer -->
-    <footer class="bg-light text-center text-lg-start">
-      <div class="text-center p-3">
-        © 2024 Email Parser Demo. All rights reserved.
-      </div>
-    </footer>
+    <!-- Toast Container -->
+    <div id="toast-container" class="fixed top-4 right-4 flex flex-col items-end space-y-2 z-50"></div>
 
-    <!-- Bootstrap JS Bundle (Includes Popper) -->
-    <script
-      src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"
-      defer
-      crossorigin="anonymous"
-    ></script>
-
-    <!-- PrismJS for Syntax Highlighting -->
-    <script
-      src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/prism.min.js"
-      defer
-      crossorigin="anonymous"
-    ></script>
-
-<!-- Socket.IO for Real-time Communication -->
-<script
-  src="https://cdn.socket.io/4.5.4/socket.io.min.js"
-  crossorigin="anonymous"
-></script>
-
-<!-- Custom Scripts -->
-<script
-  src="{{ url_for('static', filename='js/scripts.js') }}"
-  defer
-></script>
+    <!-- ParsingOverlay React Component -->
+    <script type="module" src="/static/js/main.js"></script>
   </body>
 </html>

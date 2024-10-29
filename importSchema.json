@@ -1,0 +1,45 @@
+{
+  "RequestingParty": {
+    "InsuranceCompany": "",
+    "Handler": "",
+    "CarrierClaimNumber": ""
+  },
+  "InsuredInformation": {
+    "Name": "",
+    "ContactNumber": "",
+    "LossAddress": "",
+    "PublicAdjuster": "",
+    "OwnershipStatus": ""
+  },
+  "AdjusterInformation": {
+    "AdjusterName": "",
+    "AdjusterPhoneNumber": "",
+    "AdjusterEmail": "",
+    "JobTitle": "",
+    "Address": "",
+    "PolicyNumber": ""
+  },
+  "AssignmentInformation": {
+    "DateOfLoss": "",
+    "CauseOfLoss": "",
+    "FactsOfLoss": "",
+    "LossDescription": "",
+    "ResidenceOccupiedDuringLoss": "",
+    "WasSomeoneHomeAtTimeOfDamage": "",
+    "RepairOrMitigationProgress": "",
+    "Type": "",
+    "InspectionType": ""
+  },
+  "AssignmentType": {
+    "Wind": false,
+    "Structural": false,
+    "Hail": false,
+    "Foundation": false,
+    "Other": {
+      "isChecked": false,
+      "details": ""
+    }
+  },
+  "AdditionalDetails": "",
+  "Attachments": []
+}

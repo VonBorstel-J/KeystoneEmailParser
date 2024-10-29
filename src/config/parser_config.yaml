@@ -221,16 +221,13 @@ models:
     torch_dtype: "float16"
     timeout: 60
     max_length: 1024
-    logging_level: "DEBUG"
+    logging_level: "INFO"
 
   llama:
     repo_id: "meta-llama/Llama-3.2-3B-Instruct"
     task: "text-generation"
     device: "auto"
     torch_dtype: "float16"
-    timeout_text_extraction: 60
-    timeout_validation: 45
-    timeout_summarization: 30
     max_length: 1024
     logging_level: "INFO"
     prompt_templates:
@@ -321,13 +318,21 @@ models:
         - Any special instructions or additional details
         - Missing or inconsistent information
         - Required follow-up items
+      
+      system_prompt: |
+        You are an advanced data extraction assistant. Extract information from the provided email content and output it strictly in JSON format according to the defined schema. Ensure:
+        1. All required fields are present
+        2. Correct data types and formats
+        3. "N/A" for missing optional fields
+        4. YYYY-MM-DD date format
+        5. Boolean values as true/false
+        6. Valid enum values where specified
+        7. Pattern matching for formatted fields
+        8. Complete validation of all extracted data
 
 # Processing configurations
 processing:
   batch_size: 1
-  max_length: 1024
-  device: "auto"
-  fallback_to_cpu: true
 
 # Stage configurations
 stages:
@@ -339,19 +344,19 @@ stages:
     timeout: 60
   text_extraction:
     enabled: true
-    timeout: 60
+    timeout: 200
   validation:
     enabled: true
-    timeout: 45
+    timeout: 60
   summarization:
     enabled: true
-    timeout: 30
+    timeout: 90
   post_processing:
     enabled: true
-    timeout: 30
+    timeout: 90
   json_validation:
     enabled: true
-    timeout: 30
+    timeout: 90
 
 # Schema validation settings
 schema:
@@ -375,14 +380,3 @@ field_validation:
     true_values: ["yes", "true", "1", "checked", "on"]
     false_values: ["no", "false", "0", "unchecked", "off"]
 
-# System prompt for enforcing output format
-system_prompt: |
-  You are an advanced data extraction assistant. Extract information from the provided email content and output it strictly in JSON format according to the defined schema. Ensure:
-  1. All required fields are present
-  2. Correct data types and formats
-  3. "N/A" for missing optional fields
-  4. YYYY-MM-DD date format
-  5. Boolean values as true/false
-  6. Valid enum values where specified
-  7. Pattern matching for formatted fields
-  8. Complete validation of all extracted data

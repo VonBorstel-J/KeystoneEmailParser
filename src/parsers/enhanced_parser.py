@@ -31,6 +31,7 @@ from src.utils.config import Config
 from src.utils.validation import validate_json
 from src.utils.email_utils import parse_email
 from src.utils.exceptions import ValidationError, ParsingError, InitializationError
+from src.utils.socket_emitter import ParsingProgressEmitter
 
 ADJUSTER_INFORMATION: str = "Adjuster Information"
 REQUESTING_PARTY: str = "Requesting Party"
@@ -71,7 +72,6 @@ class EnhancedParser(BaseParser):
         logger: Optional[logging.Logger],
     ):
         Config.initialize()
-        self.config: Dict[str, Any] = config or Config.get_full_config()
         self.logger: logging.Logger = logger or self._setup_logging()
         self.socketio = socketio
         self.sid = sid
@@ -108,9 +108,6 @@ class EnhancedParser(BaseParser):
     def initialize(self, input_type: str = "text") -> None:
         """
         Initialize the parser with the specified input type.
-
-        Args:
-            input_type (str): Type of input to process ("text", "image", or "both")
         """
         try:
             self.input_type = input_type
@@ -118,10 +115,12 @@ class EnhancedParser(BaseParser):
                 with self.lock:
                     self._initialize_executor()
                     self._initialize_models(input_type)
-                self._is_initialized = True
-                self.logger.info(
-                    "Parser initialized successfully for input type: %s", input_type
-                )
+                    if self.socketio and self.sid:
+                        self.progress_emitter = ParsingProgressEmitter(self.socketio, self.sid)
+                    self._is_initialized = True
+                    self.logger.info(
+                        "Parser initialized successfully for input type: %s", input_type
+                    )
         except Exception as e:
             self.logger.error("Failed to initialize parser: %s", e, exc_info=True)
             raise InitializationError(f"Parser initialization failed: {e}") from e
@@ -129,25 +128,48 @@ class EnhancedParser(BaseParser):
     def parse_email(
         self,
         email_content: Optional[str] = None,
-        document_image: Optional[Union[str, Image.Image]] = None,
+        document_image: Optional[Image.Image] = None,
     ) -> Dict[str, Any]:
+        """
+        Parse email content with real-time progress updates.
+        """
         parsed_data = {}
-    
+        
         try:
+            if self.progress_emitter and email_content:
+                # Count approximate number of lines for progress tracking
+                total_lines = len(email_content.splitlines())
+                self.progress_emitter.emit_parsing_started(total_lines)
+            
             # Parse the email content or image
             parsed_data = self.parse(email_content, document_image)
-    
+            
             # Validate the parsed data
             is_valid, errors = validate_json(parsed_data)
             if not is_valid:
                 self.logger.warning("Validation failed. Proceeding with partial results.")
                 parsed_data["validation_issues"] = errors
-    
+                if self.progress_emitter:
+                    self.progress_emitter.emit_parsing_error(
+                        "Validation issues found",
+                        {"validation_issues": errors}
+                    )
+            
+            # Emit completion event
+            if self.progress_emitter:
+                self.progress_emitter.emit_parsing_complete({
+                    "total_sections": len(parsed_data),
+                    "validation_status": "valid" if is_valid else "invalid",
+                    "timestamp": datetime.now().isoformat()
+                })
+        
         except Exception as e:
             self.logger.error("Error during email parsing: %s", e)
             parsed_data["parsing_error"] = str(e)
-    
-        return parsed_data  # Always return what was parsed   
+            if self.progress_emitter:
+                self.progress_emitter.emit_parsing_error(str(e))
+        
+        return parsed_data
 
 
     def parse(

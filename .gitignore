@@ -53,6 +53,11 @@ coverage/
 /out
 /.cache
 
+static/components/**/*.js
+static/components/**/*.jsx.map
+
+
+
 # Ignore Webpack and other config files
 .webpack/
 .cache/

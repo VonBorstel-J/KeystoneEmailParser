@@ -26,6 +26,13 @@ from src.utils.config import Config
 from src.utils.exceptions import InitializationError
 
 
+# Set memory fraction to 90% of total GPU memory
+torch.cuda.set_per_process_memory_fraction(0.9)
+
+# Clear the FFT plan cache for potentially faster CUDA operations
+torch.backends.cuda.cufft_plan_cache.clear()
+
+
 def setup_logging() -> logging.Logger:
     formatter = json_log_formatter.JSONFormatter()
     json_handler = logging.StreamHandler()
@@ -38,7 +45,7 @@ def setup_logging() -> logging.Logger:
 
 def init_app() -> (Flask, SocketIO):
     load_dotenv()
-    app = Flask(__name__)
+    app = Flask(__name__, static_folder='static', template_folder='templates')
     socketio = SocketIO(
         app,
         cors_allowed_origins="*",
@@ -77,13 +84,9 @@ def format_schema_output(formatted_data: Dict[str, Any]) -> str:
 
 
 def make_serializable(obj: Any) -> Any:
-    if isinstance(obj, np.float32):
+    if isinstance(obj, (np.float32, np.float64)):
         return float(obj)
-    elif isinstance(obj, np.float64):
-        return float(obj)
-    elif isinstance(obj, np.int32):
-        return int(obj)
-    elif isinstance(obj, np.int64):
+    elif isinstance(obj, (np.int32, np.int64)):
         return int(obj)
     elif isinstance(obj, dict):
         return {k: make_serializable(v) for k, v in obj.items()}
@@ -93,11 +96,7 @@ def make_serializable(obj: Any) -> Any:
         return tuple(make_serializable(element) for element in obj)
     elif isinstance(obj, set):
         return [make_serializable(element) for element in obj]
-    elif isinstance(obj, float):
-        return obj
-    elif isinstance(obj, int):
-        return obj
-    elif isinstance(obj, str):
+    elif isinstance(obj, (float, int, str)):
         return obj
     else:
         return str(obj)
