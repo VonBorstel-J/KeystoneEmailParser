@@ -4,7 +4,6 @@ import React, { useState, useMemo } from 'react';
 import PropTypes from 'prop-types';
 import { CopyToClipboard } from 'react-copy-to-clipboard';
 import { saveAs } from 'file-saver';
-import { jsPDF } from 'jspdf';
 import JsonView from './JsonView.jsx';
 import HumanReadable from './HumanReadable.jsx';
 import OriginalView from './OriginalView.jsx';
@@ -17,6 +16,7 @@ import './styles.css';
  * @returns {string} - The CSV representation of the JSON data.
  */
 const jsonToCsv = (json) => {
+  if (!json) return '';
   const items = Array.isArray(json) ? json : [json];
   if (items.length === 0) return '';
 
@@ -54,9 +54,20 @@ const ResultViewer = ({ parsedData }) => {
    * Handles the export of data to PDF.
    */
   const handleExportPdf = () => {
-    const doc = new jsPDF();
-    doc.text(JSON.stringify(parsedData, null, 2), 10, 10);
-    doc.save('parsed_results.pdf');
+    try {
+      // Use the globally available jsPDF
+      const doc = new window.jsPDF();
+      const text = JSON.stringify(parsedData, null, 2);
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const margin = 10;
+      const maxWidth = pageWidth - margin * 2;
+      const splitText = doc.splitTextToSize(text, maxWidth);
+      doc.text(splitText, margin, margin);
+      doc.save('parsed_results.pdf');
+    } catch (error) {
+      console.error('PDF generation failed:', error);
+      // Optionally show a toast/notification to the user
+    }
   };
 
   /**

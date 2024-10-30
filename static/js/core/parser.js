@@ -1,29 +1,42 @@
 // static/js/core/parser.js
+import store from '../store.js';
+import { showToast } from '../actions/toastActions.js';
+import { startParsing, parsingSuccess, parsingFailure } from '../actions/parsingActions.js';
+
 class Parser {
   constructor(socket) {
     this.socket = socket;
   }
 
-  async parseEmail(formData) {
-    try {
-      const response = await fetch('/parse_email', {
-        method: 'POST',
-        body: formData,
-      });
-      const contentType = response.headers.get('Content-Type');
-      if (contentType && contentType.includes('application/json')) {
-        const data = await response.json();
-        if (!response.ok) {
-          throw new Error(data.error_message || 'An error occurred while parsing.');
-        }
-        return data;
-      } else {
-        throw new Error('Unexpected response format.');
-      }
-    } catch (error) {
-      console.error('parseEmail error:', error);
-      throw error;
+  parseEmail({ emailContent, documentImage, parserOption }) {
+    store.dispatch(startParsing());
+
+    const formData = new FormData();
+    formData.append('email_content', emailContent);
+    formData.append('parser_option', parserOption);
+    if (documentImage) {
+      formData.append('document_image', documentImage);
     }
+    formData.append('socket_id', this.socket.id);
+
+    return fetch('/api/parse', {
+      method: 'POST',
+      body: formData,
+    })
+      .then((response) => response.json())
+      .then((data) => {
+        if (data.success) {
+          store.dispatch(parsingSuccess(data.results));
+          store.dispatch(showToast('success', 'Parsing completed successfully.'));
+        } else {
+          throw new Error(data.error_message || 'Parsing failed.');
+        }
+      })
+      .catch((error) => {
+        store.dispatch(parsingFailure(error.message));
+        store.dispatch(showToast('error', error.message));
+        throw error;
+      });
   }
 }
 

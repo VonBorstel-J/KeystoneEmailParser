@@ -1,20 +1,39 @@
 // static/js/actions/formActions.js
+import { LOAD_SAMPLE_EMAIL, SET_FORM_ERRORS, CLEAR_FORM_ERRORS } from './actionTypes.js';
+import { showToast } from './toastActions.js';
 
-import { UPDATE_FORM_FIELD, RESET_FORM, FORM_ERROR } from './actionTypes';
+const EMAIL_TEMPLATES = {
+  claim: `Dear Sir/Madam,
 
-// Action to update a form field
-export const updateFormField = (field, value) => ({
-  type: UPDATE_FORM_FIELD,
-  payload: { field, value },
+I am writing to formally file a claim regarding...`,
+  informal_claim: `Hi there,
+
+I need to file a claim because...`,
+  formal_fire_claim: `To Whom It May Concern,
+
+I regret to inform you that...`,
+};
+
+export const loadSampleEmail = (templateName) => ({
+  type: LOAD_SAMPLE_EMAIL,
+  payload: templateName,
 });
 
-// Action to reset the form
-export const resetForm = () => ({
-  type: RESET_FORM,
+export const setFormErrors = (errors) => ({
+  type: SET_FORM_ERRORS,
+  payload: errors,
 });
 
-// Action to handle form errors
-export const formError = (error) => ({
-  type: FORM_ERROR,
-  payload: error,
+export const clearFormErrors = () => ({
+  type: CLEAR_FORM_ERRORS,
 });
+
+// Thunk Action for loading sample email
+export const fetchSampleEmail = (templateName) => (dispatch) => {
+  if (EMAIL_TEMPLATES[templateName]) {
+    dispatch(loadSampleEmail(templateName));
+    dispatch(showToast('success', 'Sample email loaded.'));
+  } else {
+    dispatch(showToast('error', 'Invalid email template.'));
+  }
+};

@@ -1,22 +1,16 @@
 // static/js/actions/socketActions.js
+import { SET_SOCKET_CONNECTED, SET_SOCKET_DISCONNECTED, SET_SOCKET_ERROR } from './actionTypes.js';
+import { showToast } from './toastActions.js';
 
-import { SOCKET_CONNECTED, SOCKET_DISCONNECTED, SOCKET_ERROR, UPDATE_PROGRESS } from './actionTypes';
-
-export const socketConnected = () => ({
-  type: SOCKET_CONNECTED,
+export const setSocketConnected = () => ({
+  type: SET_SOCKET_CONNECTED,
 });
 
-export const socketDisconnected = (reason) => ({
-  type: SOCKET_DISCONNECTED,
-  payload: reason,
+export const setSocketDisconnected = () => ({
+  type: SET_SOCKET_DISCONNECTED,
 });
 
-export const socketError = (error) => ({
-  type: SOCKET_ERROR,
+export const setSocketError = (error) => ({
+  type: SET_SOCKET_ERROR,
   payload: error,
-});
-
-export const updateProgress = (data) => ({
-  type: UPDATE_PROGRESS,
-  payload: data,
 });

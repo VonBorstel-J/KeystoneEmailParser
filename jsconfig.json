@@ -1,0 +1,15 @@
+{
+    "compilerOptions": {
+      "baseUrl": ".",
+      "paths": {
+        "@/*": ["static/*"],
+        "@components/*": ["static/components/*"],
+        "@actions/*": ["static/js/actions/*"],
+        "@reducers/*": ["static/js/reducers/*"],
+        "@core/*": ["static/js/core/*"],
+        "@utils/*": ["static/js/utils/*"],
+        "@ui/*": ["static/js/ui/*"],
+        "@css/*": ["static/css/*"]
+      }
+    }
+  }

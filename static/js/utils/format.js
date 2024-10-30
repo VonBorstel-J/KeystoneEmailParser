@@ -1,4 +1,5 @@
 // static/js/utils/format.js
+
 export const formatJSON = (data) => {
   if (typeof data !== 'object') throw new TypeError('formatJSON expects an object');
   try {

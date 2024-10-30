@@ -359,8 +359,7 @@ if __name__ == "__main__":
         signal.signal(signal.SIGINT, signal_handler)
         signal.signal(signal.SIGTERM, signal_handler)
 
-        socketio.run(app, host=host, port=port, debug=True, use_reloader=False)
-
+        socketio.run(app, host=host, port=port, debug=True, use_reloader=False, allow_unsafe_werkzeug=True)
     except InitializationError as ie:
         logger.critical(
             "Parser initialization failed during startup: %s", ie, exc_info=True

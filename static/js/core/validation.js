@@ -1,4 +1,5 @@
 // static/js/core/validation.js
+
 class ValidationManager {
   constructor() {
     this.rules = {
@@ -38,6 +39,12 @@ class ValidationManager {
     };
   }
 
+  initialize() {
+    // Any initialization logic here
+    console.log('Validation Manager initialized');
+    return this;
+  }
+
   validate(field, value) {
     const fieldRules = this.rules[field];
     if (!fieldRules) return [];
@@ -48,7 +55,15 @@ class ValidationManager {
       return errors;
     }, []);
   }
+
+  static getInstance() {
+    if (!ValidationManager.instance) {
+      ValidationManager.instance = new ValidationManager();
+    }
+    return ValidationManager.instance;
+  }
 }
 
-const validationManager = new ValidationManager();
-export default validationManager;
+// Create and export a singleton instance
+const validationManager = ValidationManager.getInstance();
+export { validationManager as default };

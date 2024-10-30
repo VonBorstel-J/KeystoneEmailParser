@@ -1,47 +1,56 @@
-// static/js/core/socket.js
 import io from 'socket.io-client';
 import store from '../store.js';
 import { setSocketConnected, setSocketDisconnected, setSocketError } from '../actions/socketActions.js';
 
 class SocketManager {
   constructor() {
-    this.socket = io();
-    this.setupListeners();
+    if (!SocketManager.instance) {
+      this.socket = null;
+      SocketManager.instance = this;
+    }
+    return SocketManager.instance;
   }
 
-  setupListeners() {
-    this.socket.on('connect', this.handleConnect.bind(this));
-    this.socket.on('disconnect', this.handleDisconnect.bind(this));
-    this.socket.on('connect_error', this.handleError.bind(this));
-  }
+  getSocket(options = {}) {
+    if (!this.socket) {
+      const defaultOptions = {
+        transports: ['websocket'],
+        path: '/socket.io/',
+        reconnection: true,
+        reconnectionAttempts: 5,
+        reconnectionDelay: 1000,
+        timeout: 20000
+      };
 
-  handleConnect() {
-    store.dispatch(setSocketConnected(true));
-    this.enableInterface();
-  }
+      const socketUrl = process.env.NODE_ENV === 'production' 
+        ? window.location.origin
+        : 'http://localhost:5000';
 
-  handleDisconnect(reason) {
-    store.dispatch(setSocketDisconnected(reason));
-    this.disableInterface();
-  }
+      this.socket = io(socketUrl, { ...defaultOptions, ...options });
 
-  handleError(error) {
-    store.dispatch(setSocketError(error));
-    this.disableInterface();
-  }
+      this.socket.on('connect', () => {
+        store.dispatch(setSocketConnected());
+        console.log('Socket connected');
+      });
 
-  enableInterface() {
-    const elements = document.querySelectorAll('.socket-dependent');
-    elements.forEach(el => el.classList.remove('disabled'));
-  }
+      this.socket.on('disconnect', () => {
+        store.dispatch(setSocketDisconnected());
+        console.log('Socket disconnected');
+      });
 
-  disableInterface() {
-    const elements = document.querySelectorAll('.socket-dependent');
-    elements.forEach(el => el.classList.add('disabled'));
-  }
-
-  getSocket() {
+      this.socket.on('connect_error', (error) => {
+        store.dispatch(setSocketError(error.message));
+        console.error('Socket connection error:', error);
+      });
+    }
     return this.socket;
+  }
+
+  disconnect() {
+    if (this.socket) {
+      this.socket.disconnect();
+      this.socket = null;
+    }
   }
 }
 

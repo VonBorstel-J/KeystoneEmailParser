@@ -1,22 +1,52 @@
 // static/js/reducers/parsingReducer.js
-import { START_PARSING, UPDATE_PARSING_PROGRESS, PARSING_COMPLETE, PARSING_ERROR } from '../actions/actionTypes.js';
+import {
+  START_PARSING,
+  UPDATE_PARSING_PROGRESS,
+  PARSING_SUCCESS,
+  PARSING_FAILURE,
+} from '@actions/actionTypes.js';
 
 const initialState = {
-  isParsing: false,
+  isOverlayActive: false,
+  loadingMessage: 'Processing...',
   progress: 0,
+  status: 'idle', // 'parsing', 'completed', 'error'
+  results: null,
   error: null,
 };
 
 const parsingReducer = (state = initialState, action) => {
   switch (action.type) {
     case START_PARSING:
-      return { ...state, isParsing: true, progress: 0, error: null };
+      return {
+        ...state,
+        isOverlayActive: true,
+        progress: 0,
+        status: 'parsing',
+        results: null,
+        error: null,
+      };
     case UPDATE_PARSING_PROGRESS:
-      return { ...state, progress: action.payload };
-    case PARSING_COMPLETE:
-      return { ...state, isParsing: false, progress: 100, error: null };
-    case PARSING_ERROR:
-      return { ...state, isParsing: false, error: action.payload };
+      return {
+        ...state,
+        progress: action.payload,
+      };
+    case PARSING_SUCCESS:
+      return {
+        ...state,
+        isOverlayActive: false,
+        progress: 100,
+        status: 'completed',
+        results: action.payload,
+      };
+    case PARSING_FAILURE:
+      return {
+        ...state,
+        isOverlayActive: false,
+        progress: 0,
+        status: 'error',
+        error: action.payload,
+      };
     default:
       return state;
   }

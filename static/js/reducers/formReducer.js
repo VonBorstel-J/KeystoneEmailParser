@@ -1,28 +1,43 @@
 // static/js/reducers/formReducer.js
-import { UPDATE_FORM_FIELD, RESET_FORM, FORM_ERROR } from '../actions/actionTypes.js';
+import { LOAD_SAMPLE_EMAIL, SET_FORM_ERRORS, CLEAR_FORM_ERRORS } from '@actions/actionTypes.js';
+
+const EMAIL_TEMPLATES = {
+  claim: `Dear Sir/Madam,
+
+I am writing to formally file a claim regarding...`,
+  informal_claim: `Hi there,
+
+I need to file a claim because...`,
+  formal_fire_claim: `To Whom It May Concern,
+
+I regret to inform you that...`,
+};
 
 const initialState = {
-  fields: {
-    emailContent: '',
-    parserOption: '',
-    documentImage: null,
-    // Add other form fields as needed
-  },
-  error: null,
+  email_content: '',
+  parser_option: '',
+  errors: {},
+  isSubmitting: false,
 };
 
 const formReducer = (state = initialState, action) => {
   switch (action.type) {
-    case UPDATE_FORM_FIELD:
+    case LOAD_SAMPLE_EMAIL:
       return {
         ...state,
-        fields: { ...state.fields, [action.payload.field]: action.payload.value },
-        error: null,
+        email_content: EMAIL_TEMPLATES[action.payload] || '',
+        errors: {},
       };
-    case RESET_FORM:
-      return initialState;
-    case FORM_ERROR:
-      return { ...state, error: action.payload };
+    case SET_FORM_ERRORS:
+      return {
+        ...state,
+        errors: action.payload,
+      };
+    case CLEAR_FORM_ERRORS:
+      return {
+        ...state,
+        errors: {},
+      };
     default:
       return state;
   }

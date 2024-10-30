@@ -1,23 +1,22 @@
 // static/components/ResultViewer/OriginalView.jsx
-
 import React from 'react';
 import PropTypes from 'prop-types';
+import { highlightEmailContent, escapeHtml } from '@utils/html.js';
 
-/**
- * OriginalView Component
- * Displays the original email content.
- *
- * @param {Object} props
- * @param {string} props.emailContent - The original email content.
- */
-const OriginalView = ({ emailContent }) => (
-  <div className="original-view font-mono text-sm whitespace-pre-wrap dark:text-gray-300">
-    {emailContent}
-  </div>
-);
+const OriginalView = ({ emailContent }) => {
+  const highlightedContent = highlightEmailContent(emailContent);
+
+  return (
+    <div
+      id="originalEmail"
+      className="font-mono text-sm whitespace-pre-wrap"
+      dangerouslySetInnerHTML={{ __html: highlightedContent }}
+    ></div>
+  );
+};
 
 OriginalView.propTypes = {
   emailContent: PropTypes.string.isRequired,
 };
 
-export default React.memo(OriginalView);
+export default OriginalView;
