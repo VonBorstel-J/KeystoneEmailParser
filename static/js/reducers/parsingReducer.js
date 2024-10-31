@@ -1,51 +1,30 @@
 // static/js/reducers/parsingReducer.js
-import {
-  START_PARSING,
-  UPDATE_PARSING_PROGRESS,
-  PARSING_SUCCESS,
-  PARSING_FAILURE,
-} from '@actions/actionTypes.js';
-
 const initialState = {
-  isOverlayActive: false,
-  loadingMessage: 'Processing...',
-  progress: 0,
-  status: 'idle', // 'parsing', 'completed', 'error'
-  results: null,
-  error: null,
+  parsing: false,
+  parsedData: null,
+  error: null
 };
 
 const parsingReducer = (state = initialState, action) => {
   switch (action.type) {
-    case START_PARSING:
+    case 'PARSE_EMAIL_INITIATED':
       return {
         ...state,
-        isOverlayActive: true,
-        progress: 0,
-        status: 'parsing',
-        results: null,
-        error: null,
+        parsing: true,
+        error: null
       };
-    case UPDATE_PARSING_PROGRESS:
+    case 'PARSE_EMAIL_SUCCESS':
       return {
         ...state,
-        progress: action.payload,
+        parsing: false,
+        parsedData: action.payload,
+        error: null
       };
-    case PARSING_SUCCESS:
+    case 'PARSE_EMAIL_FAILURE':
       return {
         ...state,
-        isOverlayActive: false,
-        progress: 100,
-        status: 'completed',
-        results: action.payload,
-      };
-    case PARSING_FAILURE:
-      return {
-        ...state,
-        isOverlayActive: false,
-        progress: 0,
-        status: 'error',
-        error: action.payload,
+        parsing: false,
+        error: action.payload
       };
     default:
       return state;

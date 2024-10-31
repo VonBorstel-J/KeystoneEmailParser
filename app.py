@@ -5,9 +5,9 @@ import io
 import sys
 import torch
 import signal
-from pathlib import Path
 import logging
 import traceback
+from pathlib import Path
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional
 
@@ -25,13 +25,11 @@ from src.parsers.parser_registry import ParserRegistry
 from src.utils.config import Config
 from src.utils.exceptions import InitializationError
 
-
 # Set memory fraction to 90% of total GPU memory
-torch.cuda.set_per_process_memory_fraction(0.9)
-
-# Clear the FFT plan cache for potentially faster CUDA operations
-torch.backends.cuda.cufft_plan_cache.clear()
-
+if torch.cuda.is_available():
+    torch.cuda.set_per_process_memory_fraction(0.9)
+    # Clear the FFT plan cache for potentially faster CUDA operations
+    torch.backends.cuda.cufft_plan_cache.clear()
 
 def setup_logging() -> logging.Logger:
     formatter = json_log_formatter.JSONFormatter()
@@ -41,7 +39,6 @@ def setup_logging() -> logging.Logger:
     logger.addHandler(json_handler)
     logger.setLevel(logging.DEBUG)
     return logger
-
 
 def init_app() -> (Flask, SocketIO):
     load_dotenv()
@@ -55,7 +52,6 @@ def init_app() -> (Flask, SocketIO):
     )
     return app, socketio
 
-
 def setup_cache_dirs(logger: logging.Logger):
     cache_dir = str(Path("D:/AiHub"))
     os.environ["HF_HOME"] = cache_dir
@@ -67,10 +63,8 @@ def setup_cache_dirs(logger: logging.Logger):
     else:
         logger.info("CUDA not available, using CPU")
 
-
 logger = setup_logging()
 app, socketio = init_app()
-
 
 def format_schema_output(formatted_data: Dict[str, Any]) -> str:
     output = []
@@ -81,7 +75,6 @@ def format_schema_output(formatted_data: Dict[str, Any]) -> str:
             output.append(f"{field}: {value}")
         output.append("")
     return "\n".join(output)
-
 
 def make_serializable(obj: Any) -> Any:
     if isinstance(obj, (np.float32, np.float64)):
@@ -100,7 +93,6 @@ def make_serializable(obj: Any) -> Any:
         return obj
     else:
         return str(obj)
-
 
 def background_parse(
     sid: str,
@@ -196,12 +188,10 @@ def background_parse(
     finally:
         loop.close()
 
-
 @app.route("/", methods=["GET"])
 def index():
     logger.info("Rendering index page.")
     return render_template("index.html")
-
 
 @app.route("/favicon.ico")
 def favicon_route():
@@ -214,7 +204,6 @@ def favicon_route():
         )
     logger.warning("favicon.ico not found at path: %s", favicon_path)
     return jsonify({"error_message": "favicon.ico not found."}), 404
-
 
 @app.route("/parse_email", methods=["POST"])
 def parse_email_route():
@@ -283,7 +272,6 @@ def parse_email_route():
     logger.info("Parsing started for Socket ID: %s", sid)
     return jsonify({"message": "Parsing started"}), 202
 
-
 @app.route("/health", methods=["GET"])
 def health_check_route():
     try:
@@ -294,24 +282,20 @@ def health_check_route():
         logger.error("Health check failed: %s", e, exc_info=True)
         return jsonify({"status": "unhealthy", "error": str(e)}), 500
 
-
 @socketio.on("connect")
 def handle_connect():
     sid = request.sid
     logger.info("Client connected: %s", sid)
-
 
 @socketio.on("disconnect")
 def handle_disconnect():
     sid = request.sid
     logger.info("Client disconnected: %s", sid)
 
-
 @app.errorhandler(Exception)
 def handle_exception(e: Exception):
     logger.error("Unhandled exception: %s", e, exc_info=True)
     return jsonify({"error_message": "An internal error occurred."}), 500
-
 
 @app.errorhandler(404)
 def page_not_found(e: Exception):
@@ -320,7 +304,6 @@ def page_not_found(e: Exception):
         jsonify({"error_message": "The requested URL was not found on the server."}),
         404,
     )
-
 
 def signal_handler(_sig, _frame):
     try:
@@ -331,7 +314,6 @@ def signal_handler(_sig, _frame):
         logger.error("Error during cleanup: %s", e, exc_info=True)
     finally:
         sys.exit(0)
-
 
 if __name__ == "__main__":
     try:

@@ -1,6 +1,4 @@
-import io from 'socket.io-client';
-import store from '../store.js';
-import { setSocketConnected, setSocketDisconnected, setSocketError } from '../actions/socketActions.js';
+// static/js/core/socket.js
 
 class SocketManager {
   constructor() {
@@ -19,29 +17,36 @@ class SocketManager {
         reconnection: true,
         reconnectionAttempts: 5,
         reconnectionDelay: 1000,
-        timeout: 20000
+        timeout: 20000,
       };
 
-      const socketUrl = process.env.NODE_ENV === 'production' 
-        ? window.location.origin
-        : 'http://localhost:5000';
+      if (typeof io !== 'undefined') {
+        const socketUrl = process.env.NODE_ENV === 'production' 
+          ? window.location.origin 
+          : 'http://localhost:5000';
 
-      this.socket = io(socketUrl, { ...defaultOptions, ...options });
+        this.socket = io(socketUrl, { ...defaultOptions, ...options });
 
-      this.socket.on('connect', () => {
-        store.dispatch(setSocketConnected());
-        console.log('Socket connected');
-      });
+        this.socket.on('connect', () => {
+          console.log('Socket connected');
+        });
 
-      this.socket.on('disconnect', () => {
-        store.dispatch(setSocketDisconnected());
-        console.log('Socket disconnected');
-      });
+        this.socket.on('disconnect', () => {
+          console.log('Socket disconnected');
+        });
 
-      this.socket.on('connect_error', (error) => {
-        store.dispatch(setSocketError(error.message));
-        console.error('Socket connection error:', error);
-      });
+        this.socket.on('connect_error', (error) => {
+          console.error('Socket connection error:', error);
+          
+        });
+
+        this.socket.on('connect_timeout', () => {
+          console.error('Socket connection timed out');
+          
+        });
+      } else {
+        console.error('Socket.IO client not loaded');
+      }
     }
     return this.socket;
   }

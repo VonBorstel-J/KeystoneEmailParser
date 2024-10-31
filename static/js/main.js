@@ -1,18 +1,19 @@
 import React from 'react';
-import ReactDOM from 'react-dom';
+import { createRoot } from 'react-dom/client';
 import { Provider } from 'react-redux';
 import store from './store.js';
 import App from '@components/App.jsx';
 import socketManager from '@core/socket.js';
 import Parser from '@core/parser.js';
 import validationManager from '@core/validation.js';
-import themeManager from '@ui/theme.js';
+import themeManager from '@core/theme.js';
 import { setSocketConnected, setSocketDisconnected } from '@actions/socketActions.js';
 import { initializeSocketListeners } from '@core/socketListeners.js';
 
 // Import CSS files
-import '@css/styles.css';
-import '@css/utilities.css';
+import '../css/styles.css';
+import '../css/utilities.css';
+
 
 // Initialize socket connection options
 const socketOptions = {
@@ -40,11 +41,12 @@ document.addEventListener('DOMContentLoaded', () => {
     initializeSocketListeners(socket, store);
 
     // Mount the React Application
-    ReactDOM.render(
+    const container = document.getElementById('root');
+    const root = createRoot(container);
+    root.render(
       <Provider store={store}>
         <App />
-      </Provider>,
-      document.getElementById('root')
+      </Provider>
     );
   } catch (error) {
     console.error('Initialization error:', error);

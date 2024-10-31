@@ -1,23 +1,21 @@
 // static/js/reducers/index.js
 import { combineReducers } from 'redux';
-import socketReducer from './socketReducer.js';
-import parsingReducer from './parsingReducer.js';
-import uploadReducer from './uploadReducer.js';
-import formReducer from './formReducer.js';
-import toastReducer from './toastReducer.js';
-import modalReducer from './modalReducer.js';
-import themeReducer from './themeReducer.js';
-// Import other reducers as needed
+import parsingReducer from './parsingReducer';
+import socketReducer from './socketReducer';
+import modalReducer from './modalReducer';
+import toastReducer from './toastReducer';
+import themeReducer from './themeReducer';
+import formReducer from './formReducer';
+import uploadReducer from './uploadReducer';
 
 const rootReducer = combineReducers({
-  socket: socketReducer,
   parsing: parsingReducer,
-  upload: uploadReducer,
-  form: formReducer,
-  toast: toastReducer,
+  socket: socketReducer,
   modal: modalReducer,
+  toast: toastReducer,
   theme: themeReducer,
-  // Add other reducers here
+  form: formReducer,
+  upload: uploadReducer
 });
 
 export default rootReducer;

@@ -1,5 +1,4 @@
 // static/components/common/Modal.jsx
-
 import React, { useEffect } from 'react';
 import PropTypes from 'prop-types';
 import FocusLock from 'react-focus-lock';

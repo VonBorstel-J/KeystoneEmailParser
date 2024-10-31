@@ -1,107 +1,14 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Email Parser Pro</title>
-
-    <!-- Tailwind CSS -->
-    <link
-      href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css"
-      rel="stylesheet"
-    />
-
-    <!-- PrismJS for JSON Syntax Highlighting -->
-    <link
-      href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.25.0/themes/prism.min.css"
-      rel="stylesheet"
-    />
-
-    <!-- Lucide Icons -->
-    <script src="https://unpkg.com/lucide@latest"></script>
-
-    <script
-  src="https://cdnjs.cloudflare.com/ajax/libs/bodymovin/5.7.6/lottie.min.js"
-  crossorigin="anonymous"
-></script>
-
-<!-- Socket.IO -->
-<script
-  src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.5.4/socket.io.min.js"
-  crossorigin="anonymous"
-></script>
-
-<!-- Add jsPDF back with proper initialization -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-<script>
-  window.jspdf = window.jspdf || {};
-  window.jsPDF = window.jspdf.jsPDF;
-</script>
-
-    <!-- Webpack bundled styles -->
-    <link rel="stylesheet" href="/static/dist/styles.css" />
-    
-    <!-- Core Styles -->
-    <link rel="stylesheet" href="/static/css/styles.css" />
-    <link rel="stylesheet" href="/static/components/ParsingOverlay/styles.css" />
-    <link rel="stylesheet" href="/static/components/ResultViewer/styles.css" />
-    <link rel="stylesheet" href="/static/components/common/styles.css" />
-    <link rel="stylesheet" href="/static/css/utilities.css" />
-  </head>
-  <body class="bg-gray-50 min-h-screen">
-    <!-- React Mounting Points -->
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Email Parser</title>
+    <!-- Let HtmlWebpackPlugin handle CSS injection -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.5.4/socket.io.min.js"></script>
+</head>
+<body class="bg-gray-50">
     <div id="root"></div>
-    <div id="modal-root"></div>
-    <div id="toast-root"></div>
-    <div id="parsingOverlayRoot"></div>
-
-    <!-- Loading State -->
-    <div
-      id="loadingOverlay"
-      class="hidden fixed inset-0 bg-gray-900 bg-opacity-50 backdrop-blur-sm flex flex-col items-center justify-center z-50"
-      role="alert"
-      aria-live="assertive"
-    >
-      <div class="relative w-32 h-32">
-        <div class="w-32 h-32 border-8 border-indigo-200 rounded-full"></div>
-        <div
-          class="absolute top-0 left-0 w-32 h-32 border-8 border-indigo-600 rounded-full animate-spin"
-          style="border-top-color: transparent"
-        ></div>
-      </div>
-      <div class="mt-4 text-white text-lg font-medium loading-message" id="loadingMessage">
-        Processing...
-      </div>
-      <div class="mt-4 w-64 h-2 bg-gray-200 rounded-full overflow-hidden">
-        <div
-          id="progress-bar"
-          class="h-full bg-indigo-600 rounded-full transition-all duration-300"
-          style="width: 0%"
-        ></div>
-      </div>
-    </div>
-
-    <!-- Success Animation -->
-    <div
-      id="success-animation"
-      class="hidden fixed inset-0 bg-white bg-opacity-75 backdrop-blur-sm flex items-center justify-center z-50"
-      role="status"
-      aria-live="polite"
-    >
-      <div class="success-checkmark">
-        <div class="check-icon">
-          <span class="icon-line line-tip"></span>
-          <span class="icon-line line-long"></span>
-          <div class="icon-circle"></div>
-          <div class="icon-fix"></div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Toast Container -->
-    <div id="toast-container" class="fixed top-4 right-4 flex flex-col items-end space-y-2 z-50"></div>
-
-    <!-- Mount the React Application Bundle -->
-    <script src="/static/dist/bundle.js"></script>
-  </body>
+    <!-- Let HtmlWebpackPlugin handle JS injection -->
+</body>
 </html>

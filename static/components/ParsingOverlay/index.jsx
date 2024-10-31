@@ -48,4 +48,3 @@ ParsingOverlay.defaultProps = {
 };
 
 export default ParsingOverlay;
-

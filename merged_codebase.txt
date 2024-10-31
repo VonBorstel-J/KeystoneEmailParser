@@ -1,0 +1,4787 @@
+
+
+# -------------------- C:/Users/jorda/OneDrive/Desktop/Quickbase Dev Work/KeystoneEmailParser/static/js/main.js --------------------
+
+// static/js/main.js
+import React from 'react';
+import { createRoot } from 'react-dom/client';
+import { Provider } from 'react-redux';
+import store from './store.js';
+import App from '@components/App.jsx';
+import socketManager from '@core/socket.js';
+import Parser from '@core/parser.js';
+import validationManager from '@core/validation.js';
+import themeManager from '@ui/theme.js';
+import { setSocketConnected, setSocketDisconnected } from '@actions/socketActions.js';
+import { initializeSocketListeners } from '@core/socketListeners.js';
+
+// Import CSS files
+import '@css/styles.css';
+import '@css/utilities.css';
+
+// Initialize socket connection options
+const socketOptions = {
+  transports: ['websocket'],
+  path: '/socket.io/',
+  reconnection: true,
+  reconnectionAttempts: 5,
+  reconnectionDelay: 1000
+};
+
+// Wait for DOM to be ready
+document.addEventListener('DOMContentLoaded', () => {
+  try {
+    // Initialize managers
+    themeManager.initialize();
+    validationManager.initialize();
+
+    // Initialize Socket Manager with options
+    const socket = socketManager.getSocket(socketOptions);
+
+    // Initialize Parser
+    const parser = new Parser(socket);
+
+    // Initialize Socket Listeners
+    initializeSocketListeners(socket, store);
+
+    // Mount the React Application
+    const container = document.getElementById('root');
+    const root = createRoot(container);
+    root.render(
+      <Provider store={store}>
+        <App />
+      </Provider>
+    );
+  } catch (error) {
+    console.error('Initialization error:', error);
+  }
+});
+
+// Handle hot module replacement
+if (module.hot) {
+  module.hot.accept();
+}
+
+
+
+
+# -------------------- C:/Users/jorda/OneDrive/Desktop/Quickbase Dev Work/KeystoneEmailParser/static/js/store.js --------------------
+
+// static/js/store.js
+import { createStore, applyMiddleware, combineReducers } from 'redux';
+import thunk from 'redux-thunk';
+import parsingReducer from './reducers/parsingReducer.js';
+import toastReducer from './reducers/toastReducer.js';
+import socketReducer from './reducers/socketReducer.js';
+
+const rootReducer = combineReducers({
+  parsing: parsingReducer,
+  toasts: toastReducer,
+  socket: socketReducer,
+  // Add other reducers as needed
+});
+
+const store = createStore(rootReducer, applyMiddleware(thunk));
+
+export default store;
+
+
+
+
+# -------------------- C:/Users/jorda/OneDrive/Desktop/Quickbase Dev Work/KeystoneEmailParser/static/js/utils/dom.js --------------------
+
+// static/js/utils/dom.js
+export const addClass = (element, className) => {
+  if (!(element instanceof HTMLElement)) throw new TypeError('addClass expects an HTMLElement');
+  if (typeof className !== 'string') throw new TypeError('className must be a string');
+  element.classList.add(className);
+};
+
+export const removeClass = (element, className) => {
+  if (!(element instanceof HTMLElement)) throw new TypeError('removeClass expects an HTMLElement');
+  if (typeof className !== 'string') throw new TypeError('className must be a string');
+  element.classList.remove(className);
+};
+
+export const toggleClass = (element, className) => {
+  if (!(element instanceof HTMLElement)) throw new TypeError('toggleClass expects an HTMLElement');
+  if (typeof className !== 'string') throw new TypeError('className must be a string');
+  element.classList.toggle(className);
+};
+
+export const hasClass = (element, className) => {
+  if (!(element instanceof HTMLElement)) throw new TypeError('hasClass expects an HTMLElement');
+  if (typeof className !== 'string') throw new TypeError('className must be a string');
+  return element.classList.contains(className);
+};
+
+export const setInnerHTML = (element, html) => {
+  if (!(element instanceof HTMLElement)) throw new TypeError('setInnerHTML expects an HTMLElement');
+  if (typeof html !== 'string') throw new TypeError('html must be a string');
+  element.innerHTML = html;
+};
+
+export const getInputValue = (id) => {
+  if (typeof id !== 'string') throw new TypeError('getInputValue expects a string ID');
+  const element = document.getElementById(id);
+  if (!(element instanceof HTMLInputElement)) throw new TypeError('Element is not an input');
+  return element.value;
+};
+
+export const getFile = (id) => {
+  if (typeof id !== 'string') throw new TypeError('getFile expects a string ID');
+  const element = document.getElementById(id);
+  if (!(element instanceof HTMLInputElement)) throw new TypeError('Element is not an input');
+  return element.files.length > 0 ? element.files[0] : null;
+};
+
+
+
+
+# -------------------- C:/Users/jorda/OneDrive/Desktop/Quickbase Dev Work/KeystoneEmailParser/static/js/utils/html.js --------------------
+
+// static/js/utils/html.js
+
+// Escapes HTML characters to prevent XSS
+export const escapeHtml = (unsafe) => {
+  return unsafe
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+};
+
+// Escapes special characters in regex
+export const escapeRegExp = (string) => {
+  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); // $& means the whole matched string
+};
+
+// Converts parsed data into human-readable HTML
+export const renderHumanReadable = (data) => {
+  // Implement your logic to convert parsed data into human-readable HTML
+  // Example:
+  let html = '<ul>';
+  for (const [key, value] of Object.entries(data)) {
+    if (typeof value === 'object' && value !== null) {
+      html += `<li><strong>${capitalize(key)}:</strong> <ul>`;
+      for (const [subKey, subValue] of Object.entries(value)) {
+        html += `<li><strong>${capitalize(subKey)}:</strong> ${escapeHtml(String(subValue))}</li>`;
+      }
+      html += '</ul></li>';
+    } else {
+      html += `<li><strong>${capitalize(key)}:</strong> ${escapeHtml(String(value))}</li>`;
+    }
+  }
+  html += '</ul>';
+  return html;
+};
+
+// Highlights parsed sections within the original email content
+export const highlightEmailContent = (emailContent, parsedData) => {
+  let highlightedContent = escapeHtml(emailContent);
+
+  for (const [section, content] of Object.entries(parsedData)) {
+    if (section === 'validation_issues') continue;
+    if (typeof content === 'object' && content !== null) {
+      for (const [key, value] of Object.entries(content)) {
+        if (typeof value === 'string' && value.trim() !== '') {
+          const regex = new RegExp(`(${escapeRegExp(value)})`, 'g');
+          highlightedContent = highlightedContent.replace(
+            regex,
+            `<span class="highlight-${section.replace(/\s+/g, '')}">${escapeHtml(value)}</span>`
+          );
+        }
+      }
+    }
+  }
+
+  return highlightedContent;
+};
+
+// Capitalizes the first letter of a string
+const capitalize = (s) => {
+  if (typeof s !== 'string') return '';
+  return s.charAt(0).toUpperCase() + s.slice(1);
+};
+
+
+
+
+# -------------------- C:/Users/jorda/OneDrive/Desktop/Quickbase Dev Work/KeystoneEmailParser/static/js/utils/format.js --------------------
+
+// static/js/utils/format.js
+
+export const formatJSON = (data) => {
+  if (typeof data !== 'object') throw new TypeError('formatJSON expects an object');
+  try {
+    return JSON.stringify(data, null, 2);
+  } catch (error) {
+    console.error('formatJSON error:', error);
+    throw error;
+  }
+};
+
+export const toCSV = (data) => {
+  if (!Array.isArray(data)) throw new TypeError('toCSV expects an array');
+  if (data.length === 0) return '';
+  try {
+    const headers = Object.keys(data[0]);
+    const csvRows = [
+      headers.join(','),
+      ...data.map(row => headers.map(field => {
+        let cell = row[field];
+        if (typeof cell === 'object' && cell !== null) cell = JSON.stringify(cell);
+        cell = String(cell).replace(/"/g, '""');
+        return /[",\n]/.test(cell) ? `"${cell}"` : cell;
+      }).join(','))
+    ];
+    return csvRows.join('\n');
+  } catch (error) {
+    console.error('toCSV error:', error);
+    throw error;
+  }
+};
+
+export const toHumanReadable = (data) => {
+  if (typeof data !== 'object') throw new TypeError('toHumanReadable expects an object');
+  try {
+    let html = '<div class="human-readable-container"><div class="accordion" id="parsedDataAccordion">';
+    let index = 0;
+    for (const [section, content] of Object.entries(data)) {
+      if (section === "validation_issues") continue;
+      const collapseId = `collapseSection${index}`;
+      html += `
+        <div class="accordion-item">
+          <h2 class="accordion-header" id="heading${index}">
+            <button class="accordion-button ${index !== 0 ? "collapsed" : ""}" type="button" data-bs-toggle="collapse" data-bs-target="#${collapseId}" aria-expanded="${index === 0}" aria-controls="${collapseId}">
+              ${capitalize(section)}
+            </button>
+          </h2>
+          <div id="${collapseId}" class="accordion-collapse collapse ${index === 0 ? "show" : ""}" aria-labelledby="heading${index}" data-bs-parent="#parsedDataAccordion">
+            <div class="accordion-body">
+      `;
+      if (typeof content === "object" && content !== null) {
+        html += "<ul>";
+        for (const [key, value] of Object.entries(content)) {
+          html += `<li><strong>${capitalize(key)}:</strong> ${escapeHtml(value)}</li>`;
+        }
+        html += "</ul>";
+      } else {
+        html += `<p>${escapeHtml(content)}</p>`;
+      }
+      html += `
+            </div>
+          </div>
+        </div>
+      `;
+      index++;
+    }
+    html += "</div></div>";
+    return html;
+  } catch (error) {
+    console.error('toHumanReadable error:', error);
+    throw error;
+  }
+};
+
+const capitalize = (str) => typeof str === 'string' ? str.charAt(0).toUpperCase() + str.slice(1) : '';
+
+const escapeHtml = (text) => {
+  if (typeof text !== 'string') return '';
+  const map = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" };
+  return text.replace(/[&<>"']/g, m => map[m]);
+};
+
+
+
+
+# -------------------- C:/Users/jorda/OneDrive/Desktop/Quickbase Dev Work/KeystoneEmailParser/static/js/ui/theme.js --------------------
+
+// static/js/ui/theme.js
+
+class ThemeManager {
+  constructor() {
+    this.currentTheme = localStorage.getItem('theme') || 'light';
+    this.toggleButton = null;
+  }
+
+  initialize() {
+    this.applyTheme(this.currentTheme);
+    this.toggleButton = document.getElementById('theme-toggle');
+    if (this.toggleButton) {
+      this.toggleButton.addEventListener('click', () => this.toggleTheme());
+    }
+  }
+
+  applyTheme(theme) {
+    document.documentElement.setAttribute('data-theme', theme);
+    this.updateThemeIcon(theme);
+  }
+
+  toggleTheme() {
+    this.currentTheme = this.currentTheme === 'light' ? 'dark' : 'light';
+    this.applyTheme(this.currentTheme);
+    localStorage.setItem('theme', this.currentTheme);
+  }
+
+  updateThemeIcon(theme) {
+    const themeIcon = document.getElementById('theme-icon');
+    if (themeIcon) {
+      themeIcon.textContent = theme === 'light' ? '🌙' : '☀️';
+    }
+  }
+}
+
+const themeManager = new ThemeManager();
+export { themeManager as default };
+
+
+
+# -------------------- C:/Users/jorda/OneDrive/Desktop/Quickbase Dev Work/KeystoneEmailParser/static/js/core/parser.js --------------------
+
+// static/js/core/parser.js
+import store from '../store.js';
+import { showToast } from '../actions/toastActions.js';
+import { startParsing, parsingSuccess, parsingFailure } from '../actions/parsingActions.js';
+
+class Parser {
+  constructor(socket) {
+    this.socket = socket;
+  }
+
+  parseEmail({ emailContent, documentImage, parserOption }) {
+    store.dispatch(startParsing());
+
+    const formData = new FormData();
+    formData.append('email_content', emailContent);
+    formData.append('parser_option', parserOption);
+    if (documentImage) {
+      formData.append('document_image', documentImage);
+    }
+    formData.append('socket_id', this.socket.id);
+
+    return fetch('/api/parse', {
+      method: 'POST',
+      body: formData,
+    })
+      .then((response) => response.json())
+      .then((data) => {
+        if (data.success) {
+          store.dispatch(parsingSuccess(data.results));
+          store.dispatch(showToast('success', 'Parsing completed successfully.'));
+        } else {
+          throw new Error(data.error_message || 'Parsing failed.');
+        }
+      })
+      .catch((error) => {
+        store.dispatch(parsingFailure(error.message));
+        store.dispatch(showToast('error', error.message));
+        throw error;
+      });
+  }
+}
+
+export default Parser;
+
+
+
+
+# -------------------- C:/Users/jorda/OneDrive/Desktop/Quickbase Dev Work/KeystoneEmailParser/static/js/core/validation.js --------------------
+
+// static/js/core/validation.js
+
+class ValidationManager {
+  constructor() {
+    this.rules = {
+      emailContent: [
+        {
+          test: (value) => typeof value === 'string' && value.trim().length > 0,
+          message: 'Email content is required',
+        },
+        {
+          test: (value) => typeof value === 'string' && value.length <= 50000,
+          message: 'Email content too long',
+        },
+      ],
+      parserOption: [
+        {
+          test: (value) => value !== '',
+          message: 'Please select a parser option.',
+        },
+      ],
+      documentImage: [
+        {
+          test: (file) => {
+            if (!file) return true; // Optional field
+            const validTypes = ['image/png', 'image/jpeg', 'image/gif'];
+            return validTypes.includes(file.type);
+          },
+          message: 'Invalid file type.',
+        },
+        {
+          test: (file) => {
+            if (!file) return true; // Optional field
+            return file.size <= 10 * 1024 * 1024;
+          },
+          message: 'File size exceeds 10MB.',
+        },
+      ],
+    };
+  }
+
+  initialize() {
+    // Any initialization logic here
+    console.log('Validation Manager initialized');
+    return this;
+  }
+
+  validate(field, value) {
+    const fieldRules = this.rules[field];
+    if (!fieldRules) return [];
+    return fieldRules.reduce((errors, rule) => {
+      if (!rule.test(value)) {
+        errors.push(rule.message);
+      }
+      return errors;
+    }, []);
+  }
+
+  static getInstance() {
+    if (!ValidationManager.instance) {
+      ValidationManager.instance = new ValidationManager();
+    }
+    return ValidationManager.instance;
+  }
+}
+
+// Create and export a singleton instance
+const validationManager = ValidationManager.getInstance();
+export { validationManager as default };
+
+
+
+# -------------------- C:/Users/jorda/OneDrive/Desktop/Quickbase Dev Work/KeystoneEmailParser/static/js/core/socket.js --------------------
+
+// static/js/core/socket.js
+import io from 'socket.io-client';
+import store from '../store.js';
+import { setSocketConnected, setSocketDisconnected, setSocketError } from '../actions/socketActions.js';
+
+class SocketManager {
+  constructor() {
+    if (!SocketManager.instance) {
+      this.socket = null;
+      SocketManager.instance = this;
+    }
+    return SocketManager.instance;
+  }
+
+  getSocket(options = {}) {
+    if (!this.socket) {
+      const defaultOptions = {
+        transports: ['websocket'],
+        path: '/socket.io/',
+        reconnection: true,
+        reconnectionAttempts: 5,
+        reconnectionDelay: 1000,
+        timeout: 20000,
+      };
+
+      const socketUrl =
+        process.env.NODE_ENV === 'production' ? window.location.origin : 'http://localhost:5000';
+
+      this.socket = io(socketUrl, { ...defaultOptions, ...options });
+
+      this.socket.on('connect', () => {
+        store.dispatch(setSocketConnected());
+        console.log('Socket connected');
+      });
+
+      this.socket.on('disconnect', () => {
+        store.dispatch(setSocketDisconnected());
+        console.log('Socket disconnected');
+      });
+
+      this.socket.on('connect_error', (error) => {
+        store.dispatch(setSocketError(error.message));
+        console.error('Socket connection error:', error);
+      });
+    }
+    return this.socket;
+  }
+
+  disconnect() {
+    if (this.socket) {
+      this.socket.disconnect();
+      this.socket = null;
+    }
+  }
+}
+
+const socketManager = new SocketManager();
+export default socketManager;
+
+
+
+
+# -------------------- C:/Users/jorda/OneDrive/Desktop/Quickbase Dev Work/KeystoneEmailParser/static/js/core/socketListeners.js --------------------
+
+// static/js/core/socketListeners.js
+import {
+  setSocketConnected,
+  setSocketDisconnected,
+  setSocketError,
+} from '../actions/socketActions.js';
+import { showToast } from '../actions/toastActions.js';
+import {
+  startParsing,
+  updateParsingProgress,
+  parsingSuccess,
+  parsingFailure,
+} from '../actions/parsingActions.js';
+
+export const initializeSocketListeners = (socket, store) => {
+  socket.on('connect', () => {
+    store.dispatch(setSocketConnected());
+    store.dispatch(showToast('success', 'Connected to server.'));
+  });
+
+  socket.on('disconnect', () => {
+    store.dispatch(setSocketDisconnected());
+    store.dispatch(showToast('error', 'Disconnected from server.'));
+  });
+
+  socket.on('error', (error) => {
+    store.dispatch(setSocketError(error));
+    store.dispatch(showToast('error', `Socket error: ${error}`));
+  });
+
+  socket.on('parsing_started', (data) => {
+    store.dispatch(startParsing());
+    store.dispatch(showToast('info', 'Parsing started.'));
+  });
+
+  socket.on('parsing_progress', (data) => {
+    store.dispatch(updateParsingProgress(data.progress));
+  });
+
+  socket.on('parsing_completed', (data) => {
+    store.dispatch(parsingSuccess(data.result));
+    store.dispatch(showToast('success', 'Parsing completed successfully.'));
+  });
+
+  socket.on('parsing_error', (error) => {
+    store.dispatch(parsingFailure(error));
+    store.dispatch(showToast('error', `Parsing error: ${error.message || error}`));
+  });
+
+  // Add more socket event listeners as needed
+};
+
+
+
+
+# -------------------- C:/Users/jorda/OneDrive/Desktop/Quickbase Dev Work/KeystoneEmailParser/static/js/reducers/uploadReducer.js --------------------
+
+// static/js/reducers/uploadReducer.js
+import { UPLOAD_START, UPLOAD_PROGRESS, UPLOAD_COMPLETE, UPLOAD_ERROR } from '../actions/actionTypes.js';
+
+const initialState = {
+  isUploading: false,
+  progress: 0,
+  error: null,
+};
+
+const uploadReducer = (state = initialState, action) => {
+  switch (action.type) {
+    case UPLOAD_START:
+      return { ...state, isUploading: true, progress: 0, error: null };
+    case UPLOAD_PROGRESS:
+      return { ...state, progress: action.payload };
+    case UPLOAD_COMPLETE:
+      return { ...state, isUploading: false, progress: 100, error: null };
+    case UPLOAD_ERROR:
+      return { ...state, isUploading: false, error: action.payload };
+    default:
+      return state;
+  }
+};
+
+export default uploadReducer;
+
+
+
+
+# -------------------- C:/Users/jorda/OneDrive/Desktop/Quickbase Dev Work/KeystoneEmailParser/static/js/reducers/socketReducer.js --------------------
+
+// static/js/reducers/socketReducer.js
+import { SET_SOCKET_CONNECTED, SET_SOCKET_DISCONNECTED, SET_SOCKET_ERROR } from '@actions/actionTypes.js';
+
+const initialState = {
+  isConnected: false,
+  error: null,
+  socketInstance: null, // To store the socket instance if needed
+};
+
+const socketReducer = (state = initialState, action) => {
+  switch (action.type) {
+    case SET_SOCKET_CONNECTED:
+      return {
+        ...state,
+        isConnected: true,
+        error: null,
+      };
+    case SET_SOCKET_DISCONNECTED:
+      return {
+        ...state,
+        isConnected: false,
+      };
+    case SET_SOCKET_ERROR:
+      return {
+        ...state,
+        error: action.payload,
+      };
+    default:
+      return state;
+  }
+};
+
+export default socketReducer;
+
+
+
+
+# -------------------- C:/Users/jorda/OneDrive/Desktop/Quickbase Dev Work/KeystoneEmailParser/static/js/reducers/parsingReducer.js --------------------
+
+// static/js/reducers/parsingReducer.js
+import {
+  START_PARSING,
+  UPDATE_PARSING_PROGRESS,
+  PARSING_SUCCESS,
+  PARSING_FAILURE,
+} from '@actions/actionTypes.js';
+
+const initialState = {
+  isOverlayActive: false,
+  loadingMessage: 'Processing...',
+  progress: 0,
+  status: 'idle', // 'parsing', 'completed', 'error'
+  results: null,
+  error: null,
+};
+
+const parsingReducer = (state = initialState, action) => {
+  switch (action.type) {
+    case START_PARSING:
+      return {
+        ...state,
+        isOverlayActive: true,
+        progress: 0,
+        status: 'parsing',
+        results: null,
+        error: null,
+      };
+    case UPDATE_PARSING_PROGRESS:
+      return {
+        ...state,
+        progress: action.payload,
+      };
+    case PARSING_SUCCESS:
+      return {
+        ...state,
+        isOverlayActive: false,
+        progress: 100,
+        status: 'completed',
+        results: action.payload,
+      };
+    case PARSING_FAILURE:
+      return {
+        ...state,
+        isOverlayActive: false,
+        progress: 0,
+        status: 'error',
+        error: action.payload,
+      };
+    default:
+      return state;
+  }
+};
+
+export default parsingReducer;
+
+
+
+
+# -------------------- C:/Users/jorda/OneDrive/Desktop/Quickbase Dev Work/KeystoneEmailParser/static/js/reducers/formReducer.js --------------------
+
+// static/js/reducers/formReducer.js
+import { LOAD_SAMPLE_EMAIL, SET_FORM_ERRORS, CLEAR_FORM_ERRORS } from '@actions/actionTypes.js';
+
+const EMAIL_TEMPLATES = {
+  claim: `Dear Sir/Madam,
+
+I am writing to formally file a claim regarding...`,
+  informal_claim: `Hi there,
+
+I need to file a claim because...`,
+  formal_fire_claim: `To Whom It May Concern,
+
+I regret to inform you that...`,
+};
+
+const initialState = {
+  email_content: '',
+  parser_option: '',
+  errors: {},
+  isSubmitting: false,
+};
+
+const formReducer = (state = initialState, action) => {
+  switch (action.type) {
+    case LOAD_SAMPLE_EMAIL:
+      return {
+        ...state,
+        email_content: EMAIL_TEMPLATES[action.payload] || '',
+        errors: {},
+      };
+    case SET_FORM_ERRORS:
+      return {
+        ...state,
+        errors: action.payload,
+      };
+    case CLEAR_FORM_ERRORS:
+      return {
+        ...state,
+        errors: {},
+      };
+    default:
+      return state;
+  }
+};
+
+export default formReducer;
+
+
+
+
+# -------------------- C:/Users/jorda/OneDrive/Desktop/Quickbase Dev Work/KeystoneEmailParser/static/js/reducers/toastReducer.js --------------------
+
+// static/js/reducers/toastReducer.js
+import { ADD_TOAST, REMOVE_TOAST } from '@actions/actionTypes.js';
+
+const initialState = {
+  toasts: [],
+};
+
+const toastReducer = (state = initialState, action) => {
+  switch (action.type) {
+    case ADD_TOAST:
+      return {
+        ...state,
+        toasts: [...state.toasts, action.payload],
+      };
+    case REMOVE_TOAST:
+      return {
+        ...state,
+        toasts: state.toasts.filter((toast) => toast.id !== action.payload),
+      };
+    default:
+      return state;
+  }
+};
+
+export default toastReducer;
+
+
+
+
+# -------------------- C:/Users/jorda/OneDrive/Desktop/Quickbase Dev Work/KeystoneEmailParser/static/js/reducers/modalReducer.js --------------------
+
+// static/js/reducers/modalReducer.js
+import { OPEN_MODAL, CLOSE_MODAL } from '@actions/actionTypes.js';
+
+const initialState = {
+  isOpen: false,
+  modalType: null,
+};
+
+const modalReducer = (state = initialState, action) => {
+  switch (action.type) {
+    case OPEN_MODAL:
+      return {
+        isOpen: true,
+        modalType: action.payload,
+      };
+    case CLOSE_MODAL:
+      return {
+        isOpen: false,
+        modalType: null,
+      };
+    default:
+      return state;
+  }
+};
+
+export default modalReducer;
+
+
+
+
+# -------------------- C:/Users/jorda/OneDrive/Desktop/Quickbase Dev Work/KeystoneEmailParser/static/js/reducers/themeReducer.js --------------------
+
+// static/js/reducers/themeReducer.js
+import { TOGGLE_THEME, SET_THEME } from '@actions/actionTypes.js';
+
+const initialState = {
+  currentTheme: 'light',
+};
+
+const themeReducer = (state = initialState, action) => {
+  switch (action.type) {
+    case TOGGLE_THEME:
+      const newTheme = state.currentTheme === 'light' ? 'dark' : 'light';
+      localStorage.setItem('theme', newTheme);
+      document.documentElement.classList.remove(state.currentTheme);
+      document.documentElement.classList.add(newTheme);
+      return {
+        ...state,
+        currentTheme: newTheme,
+      };
+    case SET_THEME:
+      document.documentElement.classList.remove(state.currentTheme);
+      document.documentElement.classList.add(action.payload);
+      return {
+        ...state,
+        currentTheme: action.payload,
+      };
+    default:
+      return state;
+  }
+};
+
+export default themeReducer;
+
+
+
+
+# -------------------- C:/Users/jorda/OneDrive/Desktop/Quickbase Dev Work/KeystoneEmailParser/static/js/reducers/index.js --------------------
+
+// static/js/reducers/index.js
+import { combineReducers } from 'redux';
+import socketReducer from './socketReducer.js';
+import parsingReducer from './parsingReducer.js';
+import uploadReducer from './uploadReducer.js';
+import formReducer from './formReducer.js';
+import toastReducer from './toastReducer.js';
+import modalReducer from './modalReducer.js';
+import themeReducer from './themeReducer.js';
+// Import other reducers as needed
+
+const rootReducer = combineReducers({
+  socket: socketReducer,
+  parsing: parsingReducer,
+  upload: uploadReducer,
+  form: formReducer,
+  toast: toastReducer,
+  modal: modalReducer,
+  theme: themeReducer,
+  // Add other reducers here
+});
+
+export default rootReducer;
+
+
+
+
+# -------------------- C:/Users/jorda/OneDrive/Desktop/Quickbase Dev Work/KeystoneEmailParser/static/js/actions/uploadActions.js --------------------
+
+// static/js/actions/uploadActions.js
+
+import {
+    UPLOAD_START,
+    UPLOAD_PROGRESS,
+    UPLOAD_COMPLETE,
+    UPLOAD_ERROR,
+  } from './actionTypes';
+  
+  // Action to start upload
+  export const uploadStart = () => ({
+    type: UPLOAD_START,
+  });
+  
+  // Action to update upload progress
+  export const uploadProgress = (progress) => ({
+    type: UPLOAD_PROGRESS,
+    payload: progress,
+  });
+  
+  // Action when upload is complete
+  export const uploadComplete = () => ({
+    type: UPLOAD_COMPLETE,
+  });
+  
+  // Action to handle upload errors
+  export const uploadError = (error) => ({
+    type: UPLOAD_ERROR,
+    payload: error,
+  });
+  
+
+
+
+# -------------------- C:/Users/jorda/OneDrive/Desktop/Quickbase Dev Work/KeystoneEmailParser/static/js/actions/modalActions.js --------------------
+
+// static/js/actions/modalActions.js
+import { OPEN_MODAL, CLOSE_MODAL } from './actionTypes.js';
+
+export const openModal = (modalType) => ({
+  type: OPEN_MODAL,
+  payload: modalType,
+});
+
+export const closeModal = () => ({
+  type: CLOSE_MODAL,
+});
+
+
+
+
+# -------------------- C:/Users/jorda/OneDrive/Desktop/Quickbase Dev Work/KeystoneEmailParser/static/js/actions/themeActions.js --------------------
+
+// static/js/actions/themeActions.js
+import { TOGGLE_THEME, SET_THEME } from './actionTypes.js';
+
+export const toggleTheme = () => ({
+  type: TOGGLE_THEME,
+});
+
+export const setTheme = (theme) => ({
+  type: SET_THEME,
+  payload: theme,
+});
+
+
+
+
+# -------------------- C:/Users/jorda/OneDrive/Desktop/Quickbase Dev Work/KeystoneEmailParser/static/js/actions/socketActions.js --------------------
+
+// static/js/actions/socketActions.js
+import { SET_SOCKET_CONNECTED, SET_SOCKET_DISCONNECTED, SET_SOCKET_ERROR } from './actionTypes.js';
+import { showToast } from './toastActions.js';
+
+export const setSocketConnected = () => ({
+  type: SET_SOCKET_CONNECTED,
+});
+
+export const setSocketDisconnected = () => ({
+  type: SET_SOCKET_DISCONNECTED,
+});
+
+export const setSocketError = (error) => ({
+  type: SET_SOCKET_ERROR,
+  payload: error,
+});
+
+
+
+
+# -------------------- C:/Users/jorda/OneDrive/Desktop/Quickbase Dev Work/KeystoneEmailParser/static/js/actions/formActions.js --------------------
+
+// static/js/actions/formActions.js
+import { LOAD_SAMPLE_EMAIL, SET_FORM_ERRORS, CLEAR_FORM_ERRORS } from './actionTypes.js';
+import { showToast } from './toastActions.js';
+
+const EMAIL_TEMPLATES = {
+  claim: `Dear Sir/Madam,
+
+I am writing to formally file a claim regarding...`,
+  informal_claim: `Hi there,
+
+I need to file a claim because...`,
+  formal_fire_claim: `To Whom It May Concern,
+
+I regret to inform you that...`,
+};
+
+export const loadSampleEmail = (templateName) => ({
+  type: LOAD_SAMPLE_EMAIL,
+  payload: templateName,
+});
+
+export const setFormErrors = (errors) => ({
+  type: SET_FORM_ERRORS,
+  payload: errors,
+});
+
+export const clearFormErrors = () => ({
+  type: CLEAR_FORM_ERRORS,
+});
+
+// Thunk Action for loading sample email
+export const fetchSampleEmail = (templateName) => (dispatch) => {
+  if (EMAIL_TEMPLATES[templateName]) {
+    dispatch(loadSampleEmail(templateName));
+    dispatch(showToast('success', 'Sample email loaded.'));
+  } else {
+    dispatch(showToast('error', 'Invalid email template.'));
+  }
+};
+
+
+
+
+# -------------------- C:/Users/jorda/OneDrive/Desktop/Quickbase Dev Work/KeystoneEmailParser/static/js/actions/actionTypes.js --------------------
+
+// static/js/actions/actionTypes.js
+// Theme Actions
+export const TOGGLE_THEME = 'TOGGLE_THEME';
+export const SET_THEME = 'SET_THEME';
+
+// Modal Actions  
+export const OPEN_MODAL = 'OPEN_MODAL';
+export const CLOSE_MODAL = 'CLOSE_MODAL';
+
+// Toast Actions
+export const ADD_TOAST = 'ADD_TOAST';
+export const REMOVE_TOAST = 'REMOVE_TOAST';
+
+// Upload Actions
+export const UPLOAD_START = 'UPLOAD_START';
+export const UPLOAD_PROGRESS = 'UPLOAD_PROGRESS';
+export const UPLOAD_COMPLETE = 'UPLOAD_COMPLETE';
+export const UPLOAD_ERROR = 'UPLOAD_ERROR';
+
+// Socket Actions
+export const SET_SOCKET_CONNECTED = 'SET_SOCKET_CONNECTED';
+export const SET_SOCKET_DISCONNECTED = 'SET_SOCKET_DISCONNECTED'; 
+export const SET_SOCKET_ERROR = 'SET_SOCKET_ERROR';
+
+// Parsing Actions
+export const START_PARSING = 'START_PARSING';
+export const UPDATE_PARSING_PROGRESS = 'UPDATE_PARSING_PROGRESS';
+export const PARSING_SUCCESS = 'PARSING_SUCCESS';
+export const PARSING_FAILURE = 'PARSING_FAILURE';
+
+// Form Actions
+export const LOAD_SAMPLE_EMAIL = 'LOAD_SAMPLE_EMAIL';
+export const SET_FORM_ERRORS = 'SET_FORM_ERRORS';
+export const CLEAR_FORM_ERRORS = 'CLEAR_FORM_ERRORS';
+
+
+
+# -------------------- C:/Users/jorda/OneDrive/Desktop/Quickbase Dev Work/KeystoneEmailParser/static/js/actions/parsingActions.js --------------------
+
+// static/js/actions/parsingActions.js
+import {
+  START_PARSING,
+  UPDATE_PARSING_PROGRESS,
+  PARSING_SUCCESS,
+  PARSING_FAILURE,
+} from './actionTypes.js';
+import { showToast } from './toastActions.js';
+import socketManager from '../core/socket.js';
+
+export const startParsing = () => ({
+  type: START_PARSING,
+});
+
+export const updateParsingProgress = (progress) => ({
+  type: UPDATE_PARSING_PROGRESS,
+  payload: progress,
+});
+
+export const parsingSuccess = (results) => ({
+  type: PARSING_SUCCESS,
+  payload: results,
+});
+
+export const parsingFailure = (error) => ({
+  type: PARSING_FAILURE,
+  payload: error,
+});
+
+// Thunk Action for parsing email
+export const parseEmail = ({ emailContent, documentImage, parserOption }) => (dispatch) => {
+  // Dispatch startParsing to update state immediately
+  dispatch(startParsing());
+  dispatch(showToast('info', 'Parsing started.'));
+
+  const socket = socketManager.getSocket();
+  const formData = new FormData();
+  formData.append('email_content', emailContent);
+  formData.append('parser_option', parserOption);
+  if (documentImage) {
+    formData.append('document_image', documentImage);
+  }
+  formData.append('socket_id', socket.id);
+
+  fetch('/parse_email', {
+    method: 'POST',
+    body: formData,
+  })
+    .then((response) => response.json())
+    .then((data) => {
+      if (data.message === 'Parsing started') {
+        // Parsing progress and completion will be handled via socket events
+        console.log('Parsing initiated successfully.');
+      } else {
+        throw new Error(data.error_message || 'Parsing failed.');
+      }
+    })
+    .catch((error) => {
+      dispatch(parsingFailure(error.message));
+      dispatch(showToast('error', error.message));
+    });
+};
+
+
+
+
+# -------------------- C:/Users/jorda/OneDrive/Desktop/Quickbase Dev Work/KeystoneEmailParser/static/js/actions/toastActions.js --------------------
+
+// static/js/actions/toastActions.js
+import { ADD_TOAST, REMOVE_TOAST } from './actionTypes.js';
+import { v4 as uuidv4 } from 'uuid';
+
+export const addToast = (toast) => ({
+  type: ADD_TOAST,
+  payload: { id: uuidv4(), ...toast },
+});
+
+export const removeToast = (id) => ({
+  type: REMOVE_TOAST,
+  payload: id,
+});
+
+// Convenience action creators
+export const showToast = (type, message) => (dispatch) => {
+  dispatch(addToast({ type, message }));
+};
+
+
+
+
+# -------------------- C:/Users/jorda/OneDrive/Desktop/Quickbase Dev Work/KeystoneEmailParser/static/css/styles.css --------------------
+
+/* static/css/styles.css */
+:root{--primary:#4F46E5;--primary-dark:#4338CA;--success:#10B981;--error:#EF4444;--warning:#F59E0B;--background:#F9FAFB;--text-primary:#111827;--text-secondary:#6B7280;--border-color:#E5E7EB;--modal-background:#FFFFFF;--toast-success-bg:#D1FAE5;--toast-success-border:#10B981;--toast-success-text:#065F46;--toast-error-bg:#FEE2E2;--toast-error-border:#EF4444;--toast-error-text:#991B1B;--indigo-700:#3730A3;--indigo-800:#312E81;--gray-700:#374151;--gray-900:#111827;}
+[data-theme="dark"]{--primary:#6366F1;--primary-dark:#4F46E5;--success:#34D399;--error:#F87171;--warning:#FBBF24;--background:#1F2937;--text-primary:#F3F4F6;--text-secondary:#D1D5DB;--border-color:#374151;--modal-background:#111827;--toast-success-bg:#065F46;--toast-success-border:#10B981;--toast-success-text:#D1FAE5;--toast-error-bg:#991B1B;--toast-error-border:#EF4444;--toast-error-text:#FEE2E2;--indigo-700:#4F46E5;--indigo-800:#4338CA;--gray-700:#4B5563;--gray-900:#1F2937;}
+*,*::before,*::after{box-sizing:border-box;}
+body{margin:0;font-family:'Inter',sans-serif;background-color:var(--background);color:var(--text-primary);transition:background-color 0.3s ease,color 0.3s ease;}
+a{color:var(--primary);text-decoration:none;transition:color 0.3s ease;}
+a:hover{text-decoration:underline;}
+h1,h2,h3,h4,h5,h6{color:var(--text-primary);margin:0;}
+button{cursor:pointer;transition:background-color 0.3s ease,color 0.3s ease,border-color 0.3s ease;}
+.hidden{display:none;}
+.is-invalid{border-color:var(--error)!important;}
+.prose{max-width:100%;}
+textarea:focus,input:focus,select:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 2px rgba(79,70,229,0.2);}
+.text-gray-500{color:var(--text-secondary);}
+.text-gray-600{color:#4B5563;}
+.text-gray-700{color:var(--gray-700);}
+.text-gray-800{color:#1F2937;}
+.text-gray-900{color:var(--gray-900);}
+.text-red-500{color:var(--error);}
+.text-red-700{color:#B91C1C;}
+.text-green-500{color:var(--success);}
+.text-green-700{color:#047857;}
+.text-indigo-600{color:var(--primary);}
+.text-indigo-700{color:var(--indigo-700);}
+.text-indigo-800{color:var(--indigo-800);}
+.bg-gray-50{background-color:#F9FAFB;}
+.bg-gray-100{background-color:#F3F4F6;}
+.bg-gray-200{background-color:#E5E7EB;}
+.bg-gray-300{background-color:#D1D5DB;}
+.bg-white{background-color:var(--modal-background);}
+.bg-green-200{background-color:rgba(167,243,208,0.6);}
+.bg-yellow-200{background-color:rgba(253,230,138,0.6);}
+.bg-blue-200{background-color:rgba(191,219,254,0.6);}
+.bg-red-200{background-color:rgba(252,165,165,0.6);}
+.bg-purple-200{background-color:rgba(216,180,254,0.6);}
+.bg-indigo-600{background-color:var(--primary);}
+.bg-indigo-700{background-color:var(--indigo-700);}
+.bg-indigo-800{background-color:var(--indigo-800);}
+.border-gray-300{border-color:var(--border-color);}
+.border-gray-700{border-color:var(--gray-700);}
+.border-red-500{border-color:var(--error);}
+.border-red-700{border-color:#B91C1C;}
+.border-green-500{border-color:var(--success);}
+.border-indigo-600{border-color:var(--primary);}
+.border-indigo-700{border-color:var(--indigo-700);}
+.rounded-md{border-radius:0.375rem;}
+.rounded-lg{border-radius:0.5rem;}
+.rounded-full{border-radius:9999px;}
+.shadow-sm{box-shadow:0 1px 2px rgba(0,0,0,0.05);}
+.shadow-lg{box-shadow:0 10px 15px rgba(0,0,0,0.1);}
+.p-4{padding:1rem;}
+.p-6{padding:1.5rem;}
+.px-4{padding-left:1rem;padding-right:1rem;}
+.py-4{padding-top:1rem;padding-bottom:1rem;}
+.py-6{padding-top:1.5rem;padding-bottom:1.5rem;}
+.m-0{margin:0;}
+.mb-2{margin-bottom:0.5rem;}
+.mb-4{margin-bottom:1rem;}
+.mt-1{margin-top:0.25rem;}
+.mt-4{margin-top:1rem;}
+.mt-6{margin-top:1.5rem;}
+.flex{display:flex;}
+.flex-col{flex-direction:column;}
+.flex-row{flex-direction:row;}
+.items-center{align-items:center;}
+.justify-center{justify-content:center;}
+.justify-between{justify-content:space-between;}
+.gap-2{gap:0.5rem;}
+.gap-4{gap:1rem;}
+.grid{display:grid;}
+.grid-cols-1{grid-template-columns:repeat(1,minmax(0,1fr));}
+.lg\:grid-cols-2{@media (min-width:1024px){grid-template-columns:repeat(2,minmax(0,1fr));}}
+.w-full{width:100%;}
+.max-w-7xl{max-width:80rem;}
+.mx-auto{margin-left:auto;margin-right:auto;}
+.text-sm{font-size:0.875rem;}
+.text-lg{font-size:1.125rem;}
+.text-xl{font-size:1.25rem;}
+.text-2xl{font-size:1.5rem;}
+.font-medium{font-weight:500;}
+.font-semibold{font-weight:600;}
+.font-mono{font-family:'Courier New',Courier,monospace;}
+.leading-relaxed{line-height:1.625;}
+.transition-all{transition:all 0.3s ease;}
+.transition-opacity{transition:opacity 0.3s ease;}
+.transition-colors{transition:color 0.3s ease,background-color 0.3s ease,border-color 0.3s ease;}
+.cursor-pointer{cursor:pointer;}
+[data-theme="dark"] body{background-color:var(--background);color:var(--text-primary);}
+[data-theme="dark"] a{color:var(--primary);}
+[data-theme="dark"] .bg-white{background-color:var(--modal-background);}
+[data-theme="dark"] .border-gray-300{border-color:var(--border-color);}
+[data-theme="dark"] .text-gray-700{color:var(--text-secondary);}
+[data-theme="dark"] .bg-indigo-600{background-color:var(--indigo-700);}
+[data-theme="dark"] .bg-indigo-700{background-color:var(--indigo-800);}
+[data-theme="dark"] .border-indigo-600{border-color:var(--indigo-700);}
+[data-theme="dark"] .shadow-sm{box-shadow:0 1px 2px rgba(255,255,255,0.05);}
+[data-theme="dark"] .shadow-lg{box-shadow:0 10px 15px rgba(255,255,255,0.1);}
+[data-theme="dark"] .text-gray-500{color:var(--text-secondary);}
+[data-theme="dark"] .text-gray-700{color:var(--text-secondary);}
+[data-theme="dark"] .text-red-500{color:var(--error);}
+[data-theme="dark"] .text-green-500{color:var(--success);}
+[data-theme="dark"] .text-indigo-600{color:var(--primary);}
+[data-theme="dark"] .text-indigo-700{color:var(--indigo-700);}
+@keyframes icon-line-tip{0%{width:0;left:1px;top:19px;}54%{width:0;left:1px;top:19px;}70%{width:50px;left:-8px;top:37px;}84%{width:17px;left:21px;top:48px;}100%{width:25px;left:14px;top:46px;}}
+@keyframes icon-line-long{0%{width:0;right:46px;top:54px;}65%{width:0;right:46px;top:54px;}84%{width:55px;right:0px;top:35px;}100%{width:47px;right:8px;top:38px;}}
+@keyframes rotate-circle{0%{transform:rotate(-45deg);}5%{transform:rotate(-45deg);}12%{transform:rotate(-405deg);}100%{transform:rotate(-405deg);}}
+@keyframes toast-slide-in{from{transform:translateX(100%);opacity:0;}to{transform:translateX(0);opacity:1;}}
+.toast{animation:toast-slide-in 0.3s ease-out;}
+.success-checkmark{width:80px;height:80px;position:relative;}
+.check-icon{width:80px;height:80px;position:relative;border-radius:50%;box-sizing:content-box;border:4px solid #4CAF50;}
+.check-icon::before{content:'';position:absolute;top:3px;left:-2px;width:30px;height:4px;background-color:#4CAF50;transform-origin:100% 50%;border-radius:100px 0 0 100px;}
+.check-icon::after{content:'';position:absolute;top:0;left:30px;width:60px;height:4px;background-color:#4CAF50;transform-origin:0 50%;border-radius:0 100px 100px 0;animation:rotate-circle 4.25s ease-in;}
+.icon-line{height:5px;background-color:#4CAF50;display:block;border-radius:2px;position:absolute;z-index:10;}
+.icon-line.line-tip{top:46px;left:14px;width:25px;transform:rotate(45deg);animation:icon-line-tip 0.75s;}
+.icon-line.line-long{top:38px;right:8px;width:47px;transform:rotate(-45deg);animation:icon-line-long 0.75s;}
+.icon-circle{top:-4px;left:-4px;width:80px;height:80px;border-radius:50%;position:absolute;box-sizing:content-box;border:4px solid rgba(76,175,80,0.5);}
+.icon-fix{top:8px;width:5px;left:26px;height:85px;position:absolute;transform:rotate(-45deg);background-color:white;}
+.loading-overlay{backdrop-filter:blur(8px);}
+.loading-message{opacity:0;transition:opacity 0.3s ease;}
+.loading-message.visible{opacity:1;}
+.toast{animation:toast-slide-in 0.3s ease-out;}
+@media(max-width:1024px){.lg\:grid-cols-2{grid-template-columns:repeat(1,minmax(0,1fr));}}
+@media(max-width:768px){.p-6{padding:1rem;}.text-xl{font-size:1rem;}.text-2xl{font-size:1.25rem;}.shadow-lg{box-shadow:0 5px 10px rgba(0,0,0,0.05);}}
+@media(max-width:640px){.grid{grid-template-columns:1fr;}.tab-btn{padding:0.5rem;font-size:0.875rem;}.json-output{font-size:0.75rem;}.shadow-lg{box-shadow:0 5px 10px rgba(0,0,0,0.05);}}
+::-webkit-scrollbar{width:8px;height:8px;}
+::-webkit-scrollbar-track{background:#f1f1f1;}
+::-webkit-scrollbar-thumb{background:#888;border-radius:4px;}
+::-webkit-scrollbar-thumb:hover{background:#555;}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;}
+@media print{.no-print{display:none;}.page-break{page-break-before:always;}}
+
+
+
+
+# -------------------- C:/Users/jorda/OneDrive/Desktop/Quickbase Dev Work/KeystoneEmailParser/static/css/utilities.css --------------------
+
+/* static/css/utilities.css */
+
+/* Flex Utilities */
+.flex {
+  display: flex;
+}
+
+.flex-col {
+  flex-direction: column;
+}
+
+.flex-row {
+  flex-direction: row;
+}
+
+.items-center {
+  align-items: center;
+}
+
+.justify-center {
+  justify-content: center;
+}
+
+.justify-between {
+  justify-content: space-between;
+}
+
+/* Grid Utilities */
+.grid {
+  display: grid;
+}
+
+.grid-cols-1 {
+  grid-template-columns: repeat(1, minmax(0, 1fr));
+}
+
+.lg\:grid-cols-2 {
+  @media (min-width: 1024px) {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* Margin and Padding */
+.m-0 {
+  margin: 0;
+}
+
+.mt-1 {
+  margin-top: 0.25rem;
+}
+
+.mt-4 {
+  margin-top: 1rem;
+}
+
+.mb-2 {
+  margin-bottom: 0.5rem;
+}
+
+.mb-4 {
+  margin-bottom: 1rem;
+}
+
+.p-4 {
+  padding: 1rem;
+}
+
+.p-6 {
+  padding: 1.5rem;
+}
+
+.py-4 {
+  padding-top: 1rem;
+  padding-bottom: 1rem;
+}
+
+.px-4 {
+  padding-left: 1rem;
+  padding-right: 1rem;
+}
+
+/* Typography */
+.text-sm {
+  font-size: 0.875rem;
+}
+
+.text-lg {
+  font-size: 1.125rem;
+}
+
+.text-xl {
+  font-size: 1.25rem;
+}
+
+.text-2xl {
+  font-size: 1.5rem;
+}
+
+.font-medium {
+  font-weight: 500;
+}
+
+.font-semibold {
+  font-weight: 600;
+}
+
+.font-mono {
+  font-family: 'Courier New', Courier, monospace;
+}
+
+/* Background Colors */
+.bg-gray-50 {
+  background-color: #F9FAFB;
+}
+
+.bg-gray-100 {
+  background-color: #F3F4F6;
+}
+
+.bg-gray-200 {
+  background-color: rgba(209, 213, 219, 0.6); /* Updated to avoid duplication */
+}
+
+.bg-white {
+  background-color: var(--modal-background);
+}
+
+.bg-green-200 {
+  background-color: rgba(167, 243, 208, 0.6);
+}
+
+.bg-yellow-200 {
+  background-color: rgba(253, 230, 138, 0.6);
+}
+
+.bg-blue-200 {
+  background-color: rgba(191, 219, 254, 0.6);
+}
+
+.bg-red-200 {
+  background-color: rgba(252, 165, 165, 0.6);
+}
+
+.bg-purple-200 {
+  background-color: rgba(216, 180, 254, 0.6);
+}
+
+/* Text Colors */
+.text-gray-500 {
+  color: var(--text-secondary);
+}
+
+.text-gray-700 {
+  color: #4B5563;
+}
+
+.text-red-500 {
+  color: var(--error);
+}
+
+.text-green-500 {
+  color: var(--success);
+}
+
+.text-indigo-600 {
+  color: var(--primary);
+}
+
+/* Borders */
+.border-gray-300 {
+  border-color: var(--border-color);
+}
+
+.border-red-500 {
+  border-color: var(--error);
+}
+
+.border-green-500 {
+  border-color: var(--success);
+}
+
+/* Rounded Corners */
+.rounded-md {
+  border-radius: 0.375rem;
+}
+
+.rounded-lg {
+  border-radius: 0.5rem;
+}
+
+.rounded-full {
+  border-radius: 9999px;
+}
+
+/* Shadows */
+.shadow-sm {
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+.shadow-lg {
+  box-shadow: 0 10px 15px rgba(0, 0, 0, 0.1);
+}
+
+/* Transitions */
+.transition-all {
+  transition: all 0.3s ease;
+}
+
+.transition-opacity {
+  transition: opacity 0.3s ease;
+}
+
+/* Miscellaneous */
+.hidden {
+  display: none;
+}
+
+.cursor-pointer {
+  cursor: pointer;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media print {
+  .no-print {
+    display: none;
+  }
+
+  .page-break {
+    page-break-before: always;
+  }
+}
+
+
+
+
+# -------------------- C:/Users/jorda/OneDrive/Desktop/Quickbase Dev Work/KeystoneEmailParser/static/components/App.jsx --------------------
+
+// static/components/App.jsx
+import React, { useState } from 'react';
+import Header from './common/Header.jsx';
+import ParserForm from './ParsingOverlay/ParserForm.jsx'; 
+import ParsingOverlay from './ParsingOverlay/index.jsx'; 
+import ResultViewer from './ResultViewer/index.jsx';
+import ToastContainer from './common/ToastContainer.jsx';
+import Modal from './common/Modal.jsx';
+
+const App = () => {
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [parsedData, setParsedData] = useState(null);
+  const [isParsingActive, setIsParsingActive] = useState(false);
+  const [parsingProgress, setParsingProgress] = useState(0);
+  const [parsingStatus, setParsingStatus] = useState('idle');
+  const [parsingMessage, setParsingMessage] = useState('');
+
+  const handleOpenModal = () => setIsModalOpen(true);
+  const handleCloseModal = () => setIsModalOpen(false);
+
+  const handleParsingStart = () => {
+    setIsParsingActive(true);
+    setParsingProgress(0);
+    setParsingStatus('starting');
+    setParsingMessage('Parsing has started.');
+  };
+
+  const handleParsingProgress = (progress) => {
+    setParsingProgress(progress);
+  };
+
+  const handleParsingComplete = (data) => {
+    setParsedData(data);
+    setIsParsingActive(false);
+    setParsingStatus('completed');
+    setParsingMessage('Parsing completed successfully.');
+  };
+
+  const handleParsingError = (error) => {
+    setIsParsingActive(false);
+    setParsingStatus('error');
+    setParsingMessage(error.message || 'An error occurred during parsing.');
+    handleOpenModal();
+  };
+
+  return (
+    <div className="bg-gray-50 min-h-screen">
+      <Header />
+      <main className="max-w-7xl mx-auto px-4 py-8">
+        <section className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+          <article className="space-y-6">
+            <ParserForm
+              onParsingStart={handleParsingStart}
+              onParsingProgress={handleParsingProgress}
+              onParsingComplete={handleParsingComplete}
+              onParsingError={handleParsingError}
+            />
+          </article>
+          <article className="space-y-6">
+            <ResultViewer parsedData={parsedData} />
+          </article>
+        </section>
+      </main>
+      <ToastContainer />
+      <Modal
+        isOpen={isModalOpen}
+        onClose={handleCloseModal}
+        title="Parsing Error"
+      >
+        <p className="text-gray-700 dark:text-gray-300">{parsingMessage}</p>
+      </Modal>
+      <ParsingOverlay
+        isActive={isParsingActive}
+        progress={parsingProgress}
+        status={parsingStatus}
+        message={parsingMessage}
+        onClose={handleCloseModal}
+      />
+    </div>
+  );
+};
+
+export default App;
+
+
+
+
+# -------------------- C:/Users/jorda/OneDrive/Desktop/Quickbase Dev Work/KeystoneEmailParser/static/components/ResultViewer/styles.css --------------------
+
+/* static/components/ResultViewer/styles.css */
+
+/* JSON View Styling */
+.json-view {
+  background-color: #F3F4F6; /* Gray-100 */
+  padding: 1rem;
+  border-radius: 0.375rem;
+  overflow-x: auto;
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 0.875rem;
+}
+
+[data-theme="dark"] .json-view {
+  background-color: #374151; /* Gray-700 */
+  color: #F3F4F6; /* Gray-100 */
+}
+
+/* Human-Readable View Styling */
+.human-readable-container {
+  padding: 1rem;
+}
+
+.accordion-button {
+  background-color: transparent;
+  border: none;
+  font-size: 1rem;
+  text-align: left;
+  width: 100%;
+  padding: 0.75rem 1rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  transition: background-color 0.3s ease;
+}
+
+.accordion-button:hover {
+  background-color: rgba(79, 70, 229, 0.1); /* Light Indigo */
+}
+
+.accordion-button:focus {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.accordion-collapse {
+  transition: max-height 0.3s ease;
+}
+
+.accordion-body {
+  padding: 0.75rem 1rem;
+  background-color: #FFFFFF;
+  border-top: 1px solid var(--border-color);
+}
+
+[data-theme="dark"] .accordion-body {
+  background-color: #1F2937; /* Gray-800 */
+  border-top: 1px solid var(--border-color);
+}
+
+.accordion-body ul {
+  list-style-type: disc;
+  padding-left: 1.5rem;
+}
+
+.accordion-body li {
+  margin-bottom: 0.5rem;
+}
+
+/* Dark Mode Adjustments */
+[data-theme="dark"] .accordion-button {
+  color: var(--text-primary);
+}
+
+[data-theme="dark"] .accordion-button:hover {
+  background-color: rgba(99, 102, 241, 0.1); /* Darker Indigo */
+}
+
+/* Original View Styling */
+.original-view {
+  background-color: #F9FAFB; /* Gray-50 */
+  padding: 1rem;
+  border-radius: 0.375rem;
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 0.875rem;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+[data-theme="dark"] .original-view {
+  background-color: #111827; /* Gray-900 */
+  color: #F3F4F6; /* Gray-100 */
+}
+
+/* Human-Readable View Styling */
+.human-readable-container {
+  padding: 1rem;
+}
+
+.highlight-RequestingParty { background-color: rgba(167, 243, 208, 0.6); }
+.highlight-InsuredInformation { background-color: rgba(253, 230, 138, 0.6); }
+.highlight-AdjusterInformation { background-color: rgba(191, 219, 254, 0.6); }
+.highlight-AssignmentInformation { background-color: rgba(252, 165, 165, 0.6); }
+.highlight-AssignmentType { background-color: rgba(216, 180, 254, 0.6); }
+.highlight-AdditionalDetails { background-color: rgba(209, 213, 219, 0.6); }
+
+/* General Styling */
+.tab-btn.active {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.tab-content.hidden {
+  display: none;
+}
+
+
+
+
+# -------------------- C:/Users/jorda/OneDrive/Desktop/Quickbase Dev Work/KeystoneEmailParser/static/components/ResultViewer/JsonView.jsx --------------------
+
+// static/components/ResultViewer/JsonView.jsx
+
+import React from 'react';
+import PropTypes from 'prop-types';
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import { dark } from 'react-syntax-highlighter/dist/esm/styles/prism';
+
+/**
+ * JsonView Component
+ * Displays the parsed data in JSON format with syntax highlighting.
+ *
+ * @param {Object} props
+ * @param {Object} props.data - The parsed JSON data.
+ */
+const JsonView = ({ data }) => (
+  <div className="json-view overflow-auto bg-gray-50 dark:bg-gray-700 rounded-md p-4">
+    <SyntaxHighlighter language="json" style={dark} showLineNumbers>
+      {JSON.stringify(data, null, 2)}
+    </SyntaxHighlighter>
+  </div>
+);
+
+JsonView.propTypes = {
+  data: PropTypes.object.isRequired,
+};
+
+export default React.memo(JsonView);
+
+
+
+
+# -------------------- C:/Users/jorda/OneDrive/Desktop/Quickbase Dev Work/KeystoneEmailParser/static/components/ResultViewer/HumanReadable.jsx --------------------
+
+// static/components/ResultViewer/HumanReadable.jsx
+
+import React, { useState, useMemo } from 'react';
+import PropTypes from 'prop-types';
+import { CopyToClipboard } from 'react-copy-to-clipboard';
+import { Clipboard } from 'lucide-react';
+import { debounce } from 'lodash';
+import './styles.css';
+
+/**
+ * Capitalizes the first letter of a string
+ * @param {string} string
+ * @returns {string}
+ */
+const capitalizeFirstLetter = (string) => {
+  return string.charAt(0).toUpperCase() + string.slice(1);
+};
+
+/**
+ * Escapes HTML characters to prevent XSS
+ * @param {string} text
+ * @returns {string}
+ */
+const escapeHtml = (text) => {
+  const map = {
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#039;',
+  };
+  return String(text).replace(/[&<>"']/g, (m) => map[m]);
+};
+
+const HumanReadable = ({ data }) => {
+  const [activeSection, setActiveSection] = useState(null);
+  const [copyStatus, setCopyStatus] = useState(false);
+
+  /**
+   * Toggles the visibility of a section.
+   * @param {string} section - The section to toggle.
+   */
+  const toggleSection = (section) => {
+    setActiveSection((prev) => (prev === section ? null : section));
+  };
+
+  /**
+   * Handles the copy action with a debounce to prevent rapid state changes.
+   */
+  const handleCopy = useMemo(
+    () =>
+      debounce(() => {
+        setCopyStatus(true);
+        setTimeout(() => {
+          setCopyStatus(false);
+        }, 2000);
+      }, 300),
+    []
+  );
+
+  /**
+   * Generates the content for a given section.
+   * @param {string} section - The section name.
+   * @param {any} content - The content of the section.
+   * @returns {JSX.Element}
+   */
+  const renderSectionContent = (section, content) => {
+    if (typeof content === 'object' && content !== null) {
+      return (
+        <ul className="list-disc list-inside">
+          {Object.entries(content).map(([key, value]) => (
+            <li key={key}>
+              <strong>{capitalizeFirstLetter(key)}:</strong> {escapeHtml(String(value))}
+            </li>
+          ))}
+        </ul>
+      );
+    } else {
+      return <p>{escapeHtml(String(content))}</p>;
+    }
+  };
+
+  /**
+   * Prepares the human-readable text for copying.
+   * @returns {string}
+   */
+  const prepareCopyText = () => {
+    return Object.entries(data)
+      .filter(([section]) => section !== 'originalEmail')
+      .map(([section, content]) => {
+        const sectionTitle = capitalizeFirstLetter(section);
+        if (typeof content === 'object' && content !== null) {
+          const items = Object.entries(content)
+            .map(([key, value]) => `${capitalizeFirstLetter(key)}: ${value}`)
+            .join('\n');
+          return `${sectionTitle}:\n${items}`;
+        } else {
+          return `${sectionTitle}: ${content}`;
+        }
+      })
+      .join('\n\n');
+  };
+
+  return (
+    <div className="human-readable-view">
+      {/* Copy Button */}
+      <div className="flex justify-end mb-2">
+        <CopyToClipboard text={prepareCopyText()} onCopy={handleCopy}>
+          <button
+            className="copy-button flex items-center text-gray-500 hover:text-gray-700 dark:text-gray-300 dark:hover:text-gray-100 transition-colors"
+            aria-label="Copy Human-Readable Results"
+          >
+            <Clipboard className="h-5 w-5 mr-1" />
+            {copyStatus ? 'Copied!' : 'Copy'}
+          </button>
+        </CopyToClipboard>
+      </div>
+
+      {Object.entries(data).map(([section, content]) => {
+        if (section === 'originalEmail') return null; // Skip original email
+        return (
+          <div key={section} className="mb-4">
+            <button
+              onClick={() => toggleSection(section)}
+              className="w-full text-left px-4 py-2 bg-gray-200 dark:bg-gray-700 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500 flex justify-between items-center"
+              aria-expanded={activeSection === section}
+            >
+              <span className="font-medium text-gray-900 dark:text-gray-100">
+                {capitalizeFirstLetter(section)}
+              </span>
+              <span className="ml-2">
+                {activeSection === section ? '-' : '+'}
+              </span>
+            </button>
+            {activeSection === section && (
+              <div className="mt-2 px-4 py-2 bg-gray-50 dark:bg-gray-800 rounded-md">
+                {renderSectionContent(section, content)}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
+HumanReadable.propTypes = {
+  data: PropTypes.shape({
+    originalEmail: PropTypes.string.isRequired,
+    // Add other parsed data fields as needed based on importSchema.txt
+    requestingParty: PropTypes.shape({
+      insuranceCompany: PropTypes.string,
+      handler: PropTypes.string,
+      carrierClaimNumber: PropTypes.string,
+    }),
+    insuredInformation: PropTypes.shape({
+      name: PropTypes.string,
+      contactNumber: PropTypes.string,
+      lossAddress: PropTypes.string,
+      publicAdjuster: PropTypes.string,
+      ownershipStatus: PropTypes.string, // Owner or Tenant
+    }),
+    adjusterInformation: PropTypes.shape({
+      adjusterName: PropTypes.string,
+      adjusterPhoneNumber: PropTypes.string,
+      adjusterEmail: PropTypes.string,
+      jobTitle: PropTypes.string,
+      address: PropTypes.string,
+      policyNumber: PropTypes.string,
+    }),
+    assignmentInformation: PropTypes.shape({
+      dateOfLoss: PropTypes.string,
+      causeOfLoss: PropTypes.string,
+      factsOfLoss: PropTypes.string,
+      lossDescription: PropTypes.string,
+      residenceOccupiedDuringLoss: PropTypes.string,
+      wasSomeoneHome: PropTypes.string,
+      repairOrMitigationProgress: PropTypes.string,
+      type: PropTypes.string,
+      inspectionType: PropTypes.string,
+      assignmentType: PropTypes.arrayOf(PropTypes.string), // ['Wind', 'Structural', ...]
+      additionalDetails: PropTypes.string,
+      attachments: PropTypes.arrayOf(PropTypes.string), // URLs or file names
+    }),
+  }).isRequired,
+};
+
+export default React.memo(HumanReadable);
+
+
+
+
+# -------------------- C:/Users/jorda/OneDrive/Desktop/Quickbase Dev Work/KeystoneEmailParser/static/components/ResultViewer/DownloadButton.jsx --------------------
+
+// static/components/ResultViewer/DownloadButton.jsx
+import React from 'react';
+import PropTypes from 'prop-types';
+import { useSelector } from 'react-redux';
+import { toCSV, formatJSON } from '@utils/format.js';
+import { jsPDF } from 'jspdf';
+
+const DownloadButton = ({ type }) => {
+  const results = useSelector((state) => state.parsing.results);
+
+  const handleDownload = () => {
+    if (!results) {
+      alert('No parsed data available to download.');
+      return;
+    }
+
+    if (type === 'csv') {
+      downloadCSV();
+    } else if (type === 'pdf') {
+      downloadPDF();
+    }
+  };
+
+  const downloadCSV = () => {
+    const csvData = toCSV(results);
+    const blob = new Blob([csvData], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    const timestamp = new Date().toISOString().replace(/[:\-T.]/g, '').split('Z')[0];
+    link.setAttribute('download', `parsed_emails_${timestamp}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const downloadPDF = () => {
+    const doc = new jsPDF();
+    doc.setFontSize(16);
+    doc.text('Parsed Email Data', 10, 10);
+    doc.setFontSize(12);
+    const jsonString = JSON.stringify(results, null, 2);
+    const lines = doc.splitTextToSize(jsonString, 180);
+    doc.text(lines, 10, 20);
+    doc.save(`parsed_emails_${new Date().toISOString().split('T')[0]}.pdf`);
+  };
+
+  return (
+    <button
+      onClick={handleDownload}
+      className="flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+      aria-label={`Download ${type.toUpperCase()}`}
+    >
+      <svg
+        className="mr-2 h-5 w-5 text-gray-500"
+        fill="none"
+        viewBox="0 0 24 24"
+        stroke="currentColor"
+        aria-hidden="true"
+      >
+        {/* SVG Path based on type */}
+        {type === 'csv' ? (
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth="2"
+            d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+          />
+        ) : (
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth="2"
+            d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+          />
+        )}
+      </svg>
+      Download {type.toUpperCase()}
+    </button>
+  );
+};
+
+DownloadButton.propTypes = {
+  type: PropTypes.oneOf(['csv', 'pdf']).isRequired,
+};
+
+export default DownloadButton;
+
+
+
+
+# -------------------- C:/Users/jorda/OneDrive/Desktop/Quickbase Dev Work/KeystoneEmailParser/static/components/ResultViewer/OriginalView.jsx --------------------
+
+// static/components/ResultViewer/OriginalView.jsx
+import React from 'react';
+import PropTypes from 'prop-types';
+import { highlightEmailContent, escapeHtml } from '@utils/html.js';
+
+const OriginalView = ({ emailContent }) => {
+  const highlightedContent = highlightEmailContent(emailContent);
+
+  return (
+    <div
+      id="originalEmail"
+      className="font-mono text-sm whitespace-pre-wrap"
+      dangerouslySetInnerHTML={{ __html: highlightedContent }}
+    ></div>
+  );
+};
+
+OriginalView.propTypes = {
+  emailContent: PropTypes.string.isRequired,
+};
+
+export default OriginalView;
+
+
+
+
+# -------------------- C:/Users/jorda/OneDrive/Desktop/Quickbase Dev Work/KeystoneEmailParser/static/components/ResultViewer/index.jsx --------------------
+
+// static/components/ResultViewer/index.jsx
+
+import React, { useState, useMemo } from 'react';
+import PropTypes from 'prop-types';
+import { CopyToClipboard } from 'react-copy-to-clipboard';
+import { saveAs } from 'file-saver';
+import JsonView from './JsonView.jsx';
+import HumanReadable from './HumanReadable.jsx';
+import OriginalView from './OriginalView.jsx';
+import { Clipboard, Download, FileText } from 'lucide-react';
+import './styles.css';
+
+/**
+ * Utility function to convert JSON to CSV.
+ * @param {Object} json - The JSON data to convert.
+ * @returns {string} - The CSV representation of the JSON data.
+ */
+const jsonToCsv = (json) => {
+  if (!json) return '';
+  const items = Array.isArray(json) ? json : [json];
+  if (items.length === 0) return '';
+
+  const headers = Object.keys(items[0]);
+  const csvRows = [
+    headers.join(','), // Header row
+    ...items.map((item) =>
+      headers.map((header) => `"${item[header] || ''}"`).join(',')
+    ),
+  ];
+
+  return csvRows.join('\n');
+};
+
+const ResultViewer = ({ parsedData }) => {
+  const [activeTab, setActiveTab] = useState('json'); // 'json', 'human', or 'original'
+  const [copyStatus, setCopyStatus] = useState({
+    json: false,
+    human: false,
+    original: false,
+  });
+
+  // Memoize CSV conversion for performance
+  const csvData = useMemo(() => jsonToCsv(parsedData), [parsedData]);
+
+  /**
+   * Handles the export of data to CSV.
+   */
+  const handleExportCsv = () => {
+    const blob = new Blob([csvData], { type: 'text/csv;charset=utf-8;' });
+    saveAs(blob, 'parsed_results.csv');
+  };
+
+  /**
+   * Handles the export of data to PDF.
+   */
+  const handleExportPdf = () => {
+    try {
+      // Use the globally available jsPDF
+      const doc = new window.jsPDF();
+      const text = JSON.stringify(parsedData, null, 2);
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const margin = 10;
+      const maxWidth = pageWidth - margin * 2;
+      const splitText = doc.splitTextToSize(text, maxWidth);
+      doc.text(splitText, margin, margin);
+      doc.save('parsed_results.pdf');
+    } catch (error) {
+      console.error('PDF generation failed:', error);
+      // Optionally show a toast/notification to the user
+    }
+  };
+
+  /**
+   * Handles the copy action and resets the copy status after a delay.
+   * @param {string} tab - The current active tab.
+   */
+  const handleCopy = (tab) => {
+    setCopyStatus((prev) => ({ ...prev, [tab]: true }));
+    setTimeout(() => {
+      setCopyStatus((prev) => ({ ...prev, [tab]: false }));
+    }, 2000);
+  };
+
+  /**
+   * Renders the appropriate content based on the active tab.
+   */
+  const renderContent = () => {
+    switch (activeTab) {
+      case 'json':
+        return <JsonView data={parsedData} />;
+      case 'human':
+        return <HumanReadable data={parsedData} />;
+      case 'original':
+        return <OriginalView emailContent={parsedData.originalEmail} />;
+      default:
+        return null;
+    }
+  };
+
+  /**
+   * Renders the copy button based on the active tab.
+   */
+  const renderCopyButton = () => {
+    return (
+      <CopyToClipboard
+        text={
+          activeTab === 'json'
+            ? JSON.stringify(parsedData, null, 2)
+            : activeTab === 'human'
+            ? parsedData.humanReadable
+            : parsedData.originalEmail
+        }
+        onCopy={() => handleCopy(activeTab)}
+      >
+        <button
+          className="copy-button flex items-center text-gray-500 hover:text-gray-700 dark:text-gray-300 dark:hover:text-gray-100 transition-colors"
+          aria-label="Copy Results"
+        >
+          <Clipboard className="h-5 w-5 mr-1" />
+          {copyStatus[activeTab] ? 'Copied!' : 'Copy'}
+        </button>
+      </CopyToClipboard>
+    );
+  };
+
+  /**
+   * Renders the export buttons for CSV and PDF.
+   */
+  const renderExportButtons = () => {
+    return (
+      <div className="export-buttons flex space-x-2 mt-4">
+        <button
+          onClick={handleExportCsv}
+          className="export-btn flex items-center px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors"
+          aria-label="Export as CSV"
+        >
+          <Download className="h-5 w-5 mr-2" />
+          Export CSV
+        </button>
+        <button
+          onClick={handleExportPdf}
+          className="export-btn flex items-center px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors"
+          aria-label="Export as PDF"
+        >
+          <FileText className="h-5 w-5 mr-2" />
+          Export PDF
+        </button>
+      </div>
+    );
+  };
+
+  return (
+    <div className="result-viewer bg-white dark:bg-gray-800 rounded-xl shadow-sm p-6">
+      <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">Parsed Results</h2>
+
+      {/* Tabs */}
+      <div className="border-b border-gray-200 dark:border-gray-700 mb-4">
+        <nav className="-mb-px flex space-x-8" aria-label="Results Tabs">
+          <button
+            onClick={() => setActiveTab('json')}
+            className={`tab-btn whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${
+              activeTab === 'json'
+                ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400'
+                : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-300 dark:hover:text-gray-100'
+            }`}
+            aria-selected={activeTab === 'json'}
+            role="tab"
+          >
+            JSON
+          </button>
+          <button
+            onClick={() => setActiveTab('human')}
+            className={`tab-btn whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${
+              activeTab === 'human'
+                ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400'
+                : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-300 dark:hover:text-gray-100'
+            }`}
+            aria-selected={activeTab === 'human'}
+            role="tab"
+          >
+            Human-Readable
+          </button>
+          <button
+            onClick={() => setActiveTab('original')}
+            className={`tab-btn whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${
+              activeTab === 'original'
+                ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400'
+                : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-300 dark:hover:text-gray-100'
+            }`}
+            aria-selected={activeTab === 'original'}
+            role="tab"
+          >
+            Original
+          </button>
+        </nav>
+      </div>
+
+      {/* Copy and Export Controls */}
+      <div className="flex justify-between items-center mb-4">
+        {renderCopyButton()}
+        {activeTab !== 'original' && renderExportButtons()}
+      </div>
+
+      {/* Tab Content */}
+      <div className="tab-content">
+        {renderContent()}
+      </div>
+    </div>
+  );
+};
+
+ResultViewer.propTypes = {
+  parsedData: PropTypes.shape({
+    originalEmail: PropTypes.string.isRequired,
+    humanReadable: PropTypes.string.isRequired,
+    // Add other parsed data fields as needed based on importSchema.txt
+    // For example:
+    requestingParty: PropTypes.shape({
+      insuranceCompany: PropTypes.string,
+      handler: PropTypes.string,
+      carrierClaimNumber: PropTypes.string,
+    }),
+    insuredInformation: PropTypes.shape({
+      name: PropTypes.string,
+      contactNumber: PropTypes.string,
+      lossAddress: PropTypes.string,
+      publicAdjuster: PropTypes.string,
+      ownershipStatus: PropTypes.string, // Owner or Tenant
+    }),
+    adjusterInformation: PropTypes.shape({
+      adjusterName: PropTypes.string,
+      adjusterPhoneNumber: PropTypes.string,
+      adjusterEmail: PropTypes.string,
+      jobTitle: PropTypes.string,
+      address: PropTypes.string,
+      policyNumber: PropTypes.string,
+    }),
+    assignmentInformation: PropTypes.shape({
+      dateOfLoss: PropTypes.string,
+      causeOfLoss: PropTypes.string,
+      factsOfLoss: PropTypes.string,
+      lossDescription: PropTypes.string,
+      residenceOccupiedDuringLoss: PropTypes.string,
+      wasSomeoneHome: PropTypes.string,
+      repairOrMitigationProgress: PropTypes.string,
+      type: PropTypes.string,
+      inspectionType: PropTypes.string,
+      assignmentType: PropTypes.arrayOf(PropTypes.string), // ['Wind', 'Structural', ...]
+      additionalDetails: PropTypes.string,
+      attachments: PropTypes.arrayOf(PropTypes.string), // URLs or file names
+    }),
+  }).isRequired,
+};
+
+export default React.memo(ResultViewer);
+
+
+
+
+# -------------------- C:/Users/jorda/OneDrive/Desktop/Quickbase Dev Work/KeystoneEmailParser/static/components/common/styles.css --------------------
+
+/* static/components/common/styles.css */
+
+/* Toast Notification Styles */
+.toast {
+    min-width: 250px;
+    max-width: 350px;
+    padding: 1rem;
+    border-left-width: 4px;
+    border-radius: 0.375rem;
+    display: flex;
+    align-items: center;
+    box-shadow: 0 10px 15px rgba(0, 0, 0, 0.1);
+  }
+  
+  .toast-success {
+    background-color: var(--toast-success-bg);
+    border-left-color: var(--toast-success-border);
+    color: var(--toast-success-text);
+  }
+  
+  .toast-error {
+    background-color: var(--toast-error-bg);
+    border-left-color: var(--toast-error-border);
+    color: var(--toast-error-text);
+  }
+  
+  .toast svg {
+    flex-shrink: 0;
+    height: 1.25rem;
+    width: 1.25rem;
+  }
+  
+  .toast .ml-3 {
+    margin-left: 0.75rem;
+  }
+  
+  .toast button {
+    margin-left: auto;
+    background: transparent;
+    border: none;
+    color: inherit;
+    cursor: pointer;
+  }
+  
+  .toast button:hover {
+    color: var(--text-secondary);
+  }
+  
+  /* Modal Styles */
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background-color: rgba(75, 85, 99, 0.75); /* Gray-700 */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 50;
+  }
+  
+  .modal-content {
+    background-color: var(--modal-background);
+    border-radius: 0.5rem;
+    max-width: 2xl;
+    width: 100%;
+    padding: 1.5rem;
+    box-shadow: 0 10px 15px rgba(0, 0, 0, 0.1);
+  }
+  
+  .modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  
+  .modal-title {
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+  
+  .modal-close-button {
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    color: var(--text-secondary);
+  }
+  
+  .modal-close-button:hover {
+    color: var(--text-primary);
+  }
+  
+  .modal-body {
+    margin-top: 1rem;
+  }
+  
+  .modal-footer {
+    margin-top: 1.5rem;
+    display: flex;
+    justify-content: flex-end;
+  }
+  
+  .modal-footer button {
+    padding: 0.5rem 1rem;
+    border: none;
+    border-radius: 0.375rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  
+  .modal-footer .btn-secondary {
+    background-color: #E5E7EB; /* Gray-200 */
+    color: var(--text-secondary);
+  }
+  
+  .modal-footer .btn-secondary:hover {
+    background-color: #D1D5DB; /* Gray-300 */
+  }
+  
+  .modal-footer .btn-primary {
+    background-color: var(--primary);
+    color: #FFFFFF;
+  }
+  
+  .modal-footer .btn-primary:hover {
+    background-color: var(--primary-dark);
+  }
+  
+
+
+
+# -------------------- C:/Users/jorda/OneDrive/Desktop/Quickbase Dev Work/KeystoneEmailParser/static/components/common/Toast.jsx --------------------
+
+// static/components/common/Toast.jsx
+
+import React, { useEffect } from 'react';
+import PropTypes from 'prop-types';
+import { Transition } from '@headlessui/react';
+
+const Toast = ({ id, type, message, onClose, duration = 5000 }) => {
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      onClose(id);
+    }, duration);
+
+    return () => clearTimeout(timer);
+  }, [duration, onClose, id]);
+
+  return (
+    <Transition
+      appear
+      show={true}
+      enter="transform transition duration-300"
+      enterFrom="translate-y-2 opacity-0 sm:translate-y-0 sm:translate-x-2"
+      enterTo="translate-y-0 opacity-100 sm:translate-x-0"
+      leave="transform transition duration-300"
+      leaveFrom="opacity-100"
+      leaveTo="opacity-0"
+    >
+      <div
+        className={`max-w-sm w-full bg-${type === 'success' ? 'green' : 'red'}-100 border-l-4 border-${type === 'success' ? 'green' : 'red'}-500 text-${type === 'success' ? 'green' : 'red'}-700 p-4 rounded-md shadow-lg flex items-center space-x-3`}
+        role="alert"
+        aria-live="assertive"
+        aria-atomic="true"
+      >
+        <div className="flex-shrink-0">
+          {type === 'success' ? (
+            <svg className="h-5 w-5 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+            </svg>
+          ) : (
+            <svg className="h-5 w-5 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          )}
+        </div>
+        <div className="flex-1">
+          <p className="text-sm">{message}</p>
+        </div>
+        <button
+          onClick={() => onClose(id)}
+          className="ml-auto bg-transparent border-0 text-current hover:text-gray-700 focus:outline-none"
+          aria-label="Close"
+        >
+          <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+    </Transition>
+  );
+};
+
+Toast.propTypes = {
+  id: PropTypes.string.isRequired,
+  type: PropTypes.oneOf(['success', 'error']).isRequired,
+  message: PropTypes.string.isRequired,
+  onClose: PropTypes.func.isRequired,
+  duration: PropTypes.number,
+};
+
+export default Toast;
+
+
+
+
+# -------------------- C:/Users/jorda/OneDrive/Desktop/Quickbase Dev Work/KeystoneEmailParser/static/components/common/HelpModalContent.jsx --------------------
+
+// static/components/common/HelpModalContent.jsx
+import React from 'react';
+
+const HelpModalContent = () => {
+  return (
+    <div className="prose">
+      <p>Welcome to Email Parser Pro! Follow these steps to parse your emails:</p>
+      <ol>
+        <li>Choose a sample email or paste your own content in the text area</li>
+        <li>Optionally upload a related document image</li>
+        <li>Select a parser option from the dropdown</li>
+        <li>Click "Parse Email" to start the process</li>
+        <li>View the results in JSON, human-readable, or original format</li>
+        <li>Download the results in CSV or PDF format if needed</li>
+      </ol>
+      <h4>Features:</h4>
+      <ul>
+        <li>Real-time parsing progress visualization</li>
+        <li>Support for document images</li>
+        <li>Multiple output formats</li>
+        <li>Export capabilities</li>
+        <li>Dark mode support</li>
+      </ul>
+      <p>For additional support or questions, please contact our support team.</p>
+    </div>
+  );
+};
+
+export default HelpModalContent;
+
+
+
+
+# -------------------- C:/Users/jorda/OneDrive/Desktop/Quickbase Dev Work/KeystoneEmailParser/static/components/common/Header.jsx --------------------
+
+// static/components/common/Header.jsx
+import React from 'react';
+import { useDispatch } from 'react-redux';
+import { toggleTheme } from '@actions/themeActions.js';
+import { openModal } from '@actions/modalActions.js';
+
+const Header = () => {
+  const dispatch = useDispatch();
+
+  const handleThemeToggle = () => {
+    dispatch(toggleTheme());
+  };
+
+  const handleHelpClick = () => {
+    dispatch(openModal('help'));
+  };
+
+  return (
+    <header>
+      <nav className="bg-white shadow-md">
+        <div className="max-w-7xl mx-auto px-4 py-3">
+          <div className="flex justify-between items-center">
+            <div className="flex items-center space-x-3">
+              <svg
+                className="h-8 w-8 text-indigo-600"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                aria-hidden="true"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth="2"
+                  d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
+                />
+              </svg>
+              <h1 className="text-xl font-semibold text-gray-900">Email Parser Pro</h1>
+            </div>
+            <div className="flex items-center space-x-4">
+              <button
+                onClick={handleThemeToggle}
+                className="p-2 rounded-lg hover:bg-gray-100"
+                aria-label="Toggle Theme"
+              >
+                <span id="theme-icon">🌙</span>
+              </button>
+              <button
+                onClick={handleHelpClick}
+                className="p-2 rounded-lg hover:bg-gray-100"
+                aria-label="Help"
+              >
+                <svg
+                  className="h-6 w-6 text-gray-600"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  aria-hidden="true"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth="2"
+                    d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                  />
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      </nav>
+    </header>
+  );
+};
+
+export default Header;
+
+
+
+
+# -------------------- C:/Users/jorda/OneDrive/Desktop/Quickbase Dev Work/KeystoneEmailParser/static/components/common/ToastContainer.jsx --------------------
+
+// static/components/common/ToastContainer.jsx
+import React from 'react';
+import { useSelector } from 'react-redux';
+import Toast from './Toast.jsx';
+
+const ToastContainer = () => {
+  const toasts = useSelector((state) => state.toast.toasts);
+
+  return (
+    <div id="toast-container" className="fixed top-4 right-4 flex flex-col items-end space-y-2 z-50">
+      {toasts.map((toast) => (
+        <Toast key={toast.id} id={toast.id} type={toast.type} message={toast.message} />
+      ))}
+    </div>
+  );
+};
+
+export default ToastContainer;
+
+
+
+
+# -------------------- C:/Users/jorda/OneDrive/Desktop/Quickbase Dev Work/KeystoneEmailParser/static/components/common/Modal.jsx --------------------
+
+// static/components/common/Modal.jsx
+import React, { useEffect } from 'react';
+import PropTypes from 'prop-types';
+import FocusLock from 'react-focus-lock';
+import { Transition } from '@headlessui/react';
+
+const Modal = ({ isOpen, onClose, title, children }) => {
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape' && isOpen) {
+        onClose();
+      }
+    };
+
+    if (isOpen) {
+      window.addEventListener('keydown', handleKeyDown);
+      // Prevent background scrolling when modal is open
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = 'auto';
+    }
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      document.body.style.overflow = 'auto';
+    };
+  }, [isOpen, onClose]);
+
+  if (!isOpen) return null;
+
+  return (
+    <Transition appear show={isOpen} as={React.Fragment}>
+      <div
+        className="fixed inset-0 bg-gray-500 bg-opacity-75 flex items-center justify-center z-50"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="modal-title"
+      >
+        <FocusLock>
+          <Transition.Child
+            as={React.Fragment}
+            enter="transform transition duration-300"
+            enterFrom="scale-95 opacity-0"
+            enterTo="scale-100 opacity-100"
+            leave="transform transition duration-200"
+            leaveFrom="scale-100 opacity-100"
+            leaveTo="scale-95 opacity-0"
+          >
+            <div className="bg-white dark:bg-gray-800 rounded-lg max-w-lg w-full mx-4 p-6 relative">
+              {/* Close Button */}
+              <button
+                onClick={onClose}
+                className="absolute top-4 right-4 text-gray-500 hover:text-gray-700 dark:text-gray-300 dark:hover:text-gray-100"
+                aria-label="Close Modal"
+              >
+                <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+
+              {/* Modal Title */}
+              <h3 id="modal-title" className="text-lg font-medium text-gray-900 dark:text-gray-100 mb-4">
+                {title}
+              </h3>
+
+              {/* Modal Content */}
+              <div className="modal-content">
+                {children}
+              </div>
+            </div>
+          </Transition.Child>
+        </FocusLock>
+      </div>
+    </Transition>
+  );
+};
+
+Modal.propTypes = {
+  isOpen: PropTypes.bool.isRequired,
+  onClose: PropTypes.func.isRequired,
+  title: PropTypes.string.isRequired,
+  children: PropTypes.node.isRequired,
+};
+
+export default Modal;
+
+
+
+
+# -------------------- C:/Users/jorda/OneDrive/Desktop/Quickbase Dev Work/KeystoneEmailParser/static/components/ParsingOverlay/ProgressBar.jsx --------------------
+
+// static/components/ParsingOverlay/ProgressBar.jsx
+import React from 'react';
+import PropTypes from 'prop-types';
+
+/**
+ * ProgressBar Component
+ * Displays a progress bar based on the current progress percentage.
+ *
+ * @param {Object} props
+ * @param {number} props.progress - Progress percentage (0-100)
+ */
+const ProgressBar = ({ progress }) => {
+  return (
+    <div className="w-full h-2 bg-gray-200 rounded-full mb-4" aria-label="Parsing Progress">
+      <div 
+        className="h-full bg-blue-600 rounded-full transition-all duration-300"
+        style={{ width: `${progress}%` }}
+        role="progressbar"
+        aria-valuenow={progress}
+        aria-valuemin="0"
+        aria-valuemax="100"
+      />
+    </div>
+  );
+};
+
+ProgressBar.propTypes = {
+  progress: PropTypes.number.isRequired,
+};
+
+export default React.memo(ProgressBar);
+
+
+
+
+# -------------------- C:/Users/jorda/OneDrive/Desktop/Quickbase Dev Work/KeystoneEmailParser/static/components/ParsingOverlay/StatusIndicator.jsx --------------------
+
+// static/components/ParsingOverlay/StatusIndicator.jsx
+import React from 'react';
+import PropTypes from 'prop-types';
+import { AlertCircle, CheckCircle } from 'lucide-react';
+
+/**
+ * StatusIndicator Component
+ * Displays different status messages based on the current parsing status.
+ *
+ * @param {Object} props
+ * @param {string} props.status - Current status ('parsing', 'complete', 'error')
+ * @param {string} [props.errorMessage] - Error message to display in case of 'error' status
+ */
+const StatusIndicator = ({ status, errorMessage }) => {
+  const renderStatus = () => {
+    switch(status) {
+      case 'parsing':
+        return (
+          <div className="flex items-center gap-2 mb-4 text-blue-600" role="status">
+            <AlertCircle className="w-5 h-5" />
+            <span>Parsing in progress...</span>
+          </div>
+        );
+      case 'complete':
+        return (
+          <div className="flex items-center gap-2 mb-4 text-green-600" role="status">
+            <CheckCircle className="w-5 h-5" />
+            <span>Parsing complete!</span>
+          </div>
+        );
+      case 'error':
+        return (
+          <div className="flex items-center gap-2 mb-4 text-red-600" role="alert">
+            <AlertCircle className="w-5 h-5" />
+            <span>{errorMessage || 'Error occurred during parsing'}</span>
+          </div>
+        );
+      default:
+        return null;
+    }
+  };
+
+  return (
+    <>
+      {renderStatus()}
+    </>
+  );
+};
+
+StatusIndicator.propTypes = {
+  status: PropTypes.oneOf(['parsing', 'complete', 'error']).isRequired,
+  errorMessage: PropTypes.string,
+};
+
+StatusIndicator.defaultProps = {
+  errorMessage: '',
+};
+
+export default React.memo(StatusIndicator);
+
+
+
+
+# -------------------- C:/Users/jorda/OneDrive/Desktop/Quickbase Dev Work/KeystoneEmailParser/static/components/ParsingOverlay/styles.css --------------------
+
+/* static/components/ParsingOverlay/styles.css */
+
+/* Highlight Colors */
+.highlight-RequestingParty { background-color: rgba(167, 243, 208, 0.6); }
+.highlight-InsuredInformation { background-color: rgba(253, 230, 138, 0.6); }
+.highlight-AdjusterInformation { background-color: rgba(191, 219, 254, 0.6); }
+.highlight-AssignmentInformation { background-color: rgba(252, 165, 165, 0.6); }
+.highlight-AssignmentType { background-color: rgba(216, 180, 254, 0.6); }
+.highlight-AdditionalDetails { background-color: rgba(209, 213, 219, 0.6); }
+
+/* Parsing Overlay Container */
+.fixed.inset-0 {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.container {
+  width: 100%;
+  max-width: 800px;
+}
+
+/* Preformatted Text Styling */
+pre {
+  background-color: #F3F4F6; /* Gray-100 */
+  padding: 1rem;
+  border-radius: 0.375rem;
+  overflow-x: auto;
+}
+
+[data-theme="dark"] pre {
+  background-color: #374151; /* Gray-700 */
+  color: #F3F4F6; /* Gray-100 */
+}
+
+/* Transition Effects */
+.transition-all {
+  transition: all 0.3s ease;
+}
+
+
+
+
+# -------------------- C:/Users/jorda/OneDrive/Desktop/Quickbase Dev Work/KeystoneEmailParser/static/components/ParsingOverlay/ParserForm.jsx --------------------
+
+// static/components/ParsingOverlay/ParserForm.jsx
+import React, { useState } from 'react';
+import { useDispatch, useSelector } from 'react-redux';
+import { parseEmail } from '@actions/parsingActions';
+import { setFormErrors, clearFormErrors } from '@actions/formActions';
+import ValidationManager from '@core/validation';
+
+const ParserForm = () => {
+  const dispatch = useDispatch();
+  const { isSubmitting, errors } = useSelector(state => state.form);
+  const [formData, setFormData] = useState({
+    emailContent: '',
+    parserOption: '',
+    documentImage: null
+  });
+
+  const handleInputChange = (e) => {
+    const { name, value, files } = e.target;
+    if (files) {
+      setFormData(prev => ({
+        ...prev,
+        [name]: files[0]
+      }));
+    } else {
+      setFormData(prev => ({
+        ...prev,
+        [name]: value
+      }));
+    }
+  };
+
+  const validateForm = () => {
+    const newErrors = {};
+    Object.keys(formData).forEach(field => {
+      const fieldErrors = ValidationManager.validate(field, formData[field]);
+      if (fieldErrors.length > 0) {
+        newErrors[field] = fieldErrors;
+      }
+    });
+
+    if (Object.keys(newErrors).length > 0) {
+      dispatch(setFormErrors(newErrors));
+      return false;
+    }
+    
+    dispatch(clearFormErrors());
+    return true;
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    
+    if (!validateForm()) {
+      return;
+    }
+
+    const formDataToSend = new FormData();
+    formDataToSend.append('emailContent', formData.emailContent);
+    formDataToSend.append('parserOption', formData.parserOption);
+    if (formData.documentImage) {
+      formDataToSend.append('documentImage', formData.documentImage);
+    }
+
+    dispatch(parseEmail(formDataToSend));
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-6" encType="multipart/form-data">
+      <div>
+        <label htmlFor="emailContent" className="block text-sm font-medium text-gray-700 dark:text-gray-200">
+          Email Content
+        </label>
+        <textarea
+          id="emailContent"
+          name="emailContent"
+          value={formData.emailContent}
+          onChange={handleInputChange}
+          className={`mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 ${
+            errors.emailContent ? 'border-red-500' : ''
+          }`}
+          rows={10}
+        />
+        {errors.emailContent && (
+          <p className="mt-1 text-sm text-red-600">{errors.emailContent[0]}</p>
+        )}
+      </div>
+
+      <div>
+        <label htmlFor="parserOption" className="block text-sm font-medium text-gray-700 dark:text-gray-200">
+          Parser Option
+        </label>
+        <select
+          id="parserOption"
+          name="parserOption"
+          value={formData.parserOption}
+          onChange={handleInputChange}
+          className={`mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 ${
+            errors.parserOption ? 'border-red-500' : ''
+          }`}
+        >
+          <option value="">Select a parser</option>
+          <option value="enhanced">Enhanced Parser</option>
+          <option value="composite">Composite Parser</option>
+        </select>
+        {errors.parserOption && (
+          <p className="mt-1 text-sm text-red-600">{errors.parserOption[0]}</p>
+        )}
+      </div>
+
+      <div>
+        <label htmlFor="documentImage" className="block text-sm font-medium text-gray-700 dark:text-gray-200">
+          Document Image (Optional)
+        </label>
+        <input
+          type="file"
+          id="documentImage"
+          name="documentImage"
+          onChange={handleInputChange}
+          accept="image/*"
+          className={`mt-1 block w-full ${
+            errors.documentImage ? 'border-red-500' : ''
+          }`}
+        />
+        {errors.documentImage && (
+          <p className="mt-1 text-sm text-red-600">{errors.documentImage[0]}</p>
+        )}
+      </div>
+
+      <button
+        type="submit"
+        disabled={isSubmitting}
+        className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
+      >
+        {isSubmitting ? 'Parsing...' : 'Parse Email'}
+      </button>
+    </form>
+  );
+};
+
+export default ParserForm;
+
+
+
+# -------------------- C:/Users/jorda/OneDrive/Desktop/Quickbase Dev Work/KeystoneEmailParser/static/components/ParsingOverlay/index.jsx --------------------
+
+// static/components/ParsingOverlay/index.jsx
+import React from 'react';
+import PropTypes from 'prop-types';
+import FocusLock from 'react-focus-lock';
+import ProgressBar from './ProgressBar';
+import StatusIndicator from './StatusIndicator';
+import './styles.css';
+
+const ParsingOverlay = ({ isActive, progress, status, message, onClose }) => {
+  if (!isActive) return null;
+
+  return (
+    <div className="fixed inset-0 bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm z-50 flex items-center justify-center">
+      <FocusLock>
+        <div className="bg-white dark:bg-gray-900 rounded-lg shadow-xl w-full max-w-3xl mx-4 p-6">
+          <h2 className="text-2xl font-semibold text-gray-900 dark:text-gray-100 mb-4">
+            Parsing Email
+          </h2>
+          <ProgressBar progress={progress} />
+          <StatusIndicator status={status} message={message} />
+          {onClose && (
+            <button
+              onClick={onClose}
+              className="mt-4 px-4 py-2 bg-gray-200 dark:bg-gray-700 rounded-md"
+            >
+              Close
+            </button>
+          )}
+        </div>
+      </FocusLock>
+    </div>
+  );
+};
+
+ParsingOverlay.propTypes = {
+  isActive: PropTypes.bool.isRequired,
+  progress: PropTypes.number,
+  status: PropTypes.string,
+  message: PropTypes.string,
+  onClose: PropTypes.func,
+};
+
+ParsingOverlay.defaultProps = {
+  progress: 0,
+  status: 'idle',
+  message: '',
+  onClose: null,
+};
+
+export default ParsingOverlay;
+
+
+
+
+# -------------------- C:/Users/jorda/OneDrive/Desktop/Quickbase Dev Work/KeystoneEmailParser/templates/index.html --------------------
+
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Email Parser Pro</title>
+
+    <!-- Tailwind CSS -->
+    <link
+      href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css"
+      rel="stylesheet"
+    />
+
+    <!-- PrismJS for JSON Syntax Highlighting -->
+    <link
+      href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.25.0/themes/prism.min.css"
+      rel="stylesheet"
+    />
+
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <script
+  src="https://cdnjs.cloudflare.com/ajax/libs/bodymovin/5.7.6/lottie.min.js"
+  crossorigin="anonymous"
+></script>
+
+<!-- Socket.IO -->
+<script
+  src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.5.4/socket.io.min.js"
+  crossorigin="anonymous"
+></script>
+
+<!-- Add jsPDF back with proper initialization -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script>
+  window.jspdf = window.jspdf || {};
+  window.jsPDF = window.jspdf.jsPDF;
+</script>
+
+    <!-- Webpack bundled styles -->
+    <link rel="stylesheet" href="/static/dist/styles.css" />
+    
+    <!-- Core Styles -->
+    <link rel="stylesheet" href="/static/css/styles.css" />
+    <link rel="stylesheet" href="/static/components/ParsingOverlay/styles.css" />
+    <link rel="stylesheet" href="/static/components/ResultViewer/styles.css" />
+    <link rel="stylesheet" href="/static/components/common/styles.css" />
+    <link rel="stylesheet" href="/static/css/utilities.css" />
+  </head>
+  <body class="bg-gray-50 min-h-screen">
+    <!-- React Mounting Points -->
+    <div id="root"></div>
+    <div id="modal-root"></div>
+    <div id="toast-root"></div>
+    <div id="parsingOverlayRoot"></div>
+
+    <!-- Loading State -->
+    <div
+      id="loadingOverlay"
+      class="hidden fixed inset-0 bg-gray-900 bg-opacity-50 backdrop-blur-sm flex flex-col items-center justify-center z-50"
+      role="alert"
+      aria-live="assertive"
+    >
+      <div class="relative w-32 h-32">
+        <div class="w-32 h-32 border-8 border-indigo-200 rounded-full"></div>
+        <div
+          class="absolute top-0 left-0 w-32 h-32 border-8 border-indigo-600 rounded-full animate-spin"
+          style="border-top-color: transparent"
+        ></div>
+      </div>
+      <div class="mt-4 text-white text-lg font-medium loading-message" id="loadingMessage">
+        Processing...
+      </div>
+      <div class="mt-4 w-64 h-2 bg-gray-200 rounded-full overflow-hidden">
+        <div
+          id="progress-bar"
+          class="h-full bg-indigo-600 rounded-full transition-all duration-300"
+          style="width: 0%"
+        ></div>
+      </div>
+    </div>
+
+    <!-- Success Animation -->
+    <div
+      id="success-animation"
+      class="hidden fixed inset-0 bg-white bg-opacity-75 backdrop-blur-sm flex items-center justify-center z-50"
+      role="status"
+      aria-live="polite"
+    >
+      <div class="success-checkmark">
+        <div class="check-icon">
+          <span class="icon-line line-tip"></span>
+          <span class="icon-line line-long"></span>
+          <div class="icon-circle"></div>
+          <div class="icon-fix"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Toast Container -->
+    <div id="toast-container" class="fixed top-4 right-4 flex flex-col items-end space-y-2 z-50"></div>
+
+    <!-- Mount the React Application Bundle -->
+    <script src="/static/dist/bundle.js"></script>
+  </body>
+</html>
+
+
+
+
+# -------------------- C:/Users/jorda/OneDrive/Desktop/Quickbase Dev Work/KeystoneEmailParser/src/utils/config.py --------------------
+
+# config.py
+
+import yaml
+import logging
+from pathlib import Path
+from typing import Dict, Any, Optional, List
+
+import torch 
+import pipeline
+
+
+class ConfigurationError(Exception):
+    """Base exception for configuration errors."""
+    pass
+
+
+class Config:
+    """Simplified configuration management for the parser system."""
+
+    _config: Dict[str, Any] = {}
+    _is_initialized: bool = False
+
+    @classmethod
+    def initialize(cls, config_path: Optional[str] = None) -> None:
+        """Initialize configuration from a YAML file."""
+        if cls._is_initialized:
+            return
+
+        try:
+            # Use the provided path if it exists, else use the default path
+            if not config_path:
+                config_path = Path(__file__).parent.parent / "config" / "parser_config.yaml"
+
+            # Log the config path to ensure correctness
+            logging.debug(f"Loading config from: {config_path}")
+
+            with open(config_path, 'r') as f:
+                cls._config = yaml.safe_load(f) or {}
+
+            # Log the loaded configuration for debugging
+            logging.debug(f"Loaded configuration: {cls._config}")
+
+            cls._is_initialized = True
+            logging.info("Configuration initialized successfully")
+
+        except FileNotFoundError:
+            logging.error(f"Configuration file not found at: {config_path}")
+            raise ConfigurationError(f"Configuration file not found at: {config_path}")
+        except yaml.YAMLError as e:
+            logging.error(f"Error parsing YAML file: {e}")
+            raise ConfigurationError(f"Error parsing YAML file: {e}")
+        except Exception as e:
+            logging.error(f"Unexpected error during configuration initialization: {e}")
+            raise ConfigurationError(f"Unexpected error during configuration initialization: {e}") from e
+
+    @classmethod
+    def get_full_config(cls) -> Dict[str, Any]:
+        """Retrieve the full configuration."""
+        if not cls._is_initialized:
+            cls.initialize()
+        logging.debug(f"Full config loaded: {cls._config}")
+        return cls._config
+
+    @classmethod
+    def get_processing_config(cls) -> Dict[str, Any]:
+        """Retrieve the processing section of the configuration."""
+        return cls.get_full_config().get("processing", {})
+
+    @classmethod
+    def get_model_config(cls, model_name: str) -> Dict[str, Any]:
+        """Retrieve the configuration for a specific model."""
+        models = cls.get_full_config().get("models", {})
+        if model_name not in models:
+            raise ConfigurationError(f"Configuration for model '{model_name}' not found")
+        return models[model_name]
+
+    @classmethod
+    def get_logging_config(cls) -> Dict[str, Any]:
+        """Retrieve the logging configuration."""
+        return cls.get_full_config().get("logging", {})
+
+    @classmethod
+    def get_cache_dir(cls) -> str:
+        """Retrieve the cache directory from the configuration."""
+        return cls.get_full_config().get("cache_dir", ".cache")
+
+    @classmethod
+    def should_fallback_to_cpu(cls) -> bool:
+        """Determine if fallback to CPU is enabled."""
+        return cls.get_processing_config().get("fallback_to_cpu", True)
+
+    @classmethod
+    def is_amp_enabled(cls) -> bool:
+        """Check if Automatic Mixed Precision (AMP) is enabled."""
+        return cls.get_processing_config().get("enable_amp", False)
+
+    @classmethod
+    def should_optimize_memory(cls) -> bool:
+        """Check if memory optimization is enabled."""
+        return cls.get_processing_config().get("optimize_memory", True)
+
+    @classmethod
+    def get_enabled_stages(cls) -> List[str]:
+        """Get list of enabled parsing stages."""
+        stages = cls.get_full_config().get("stages", {})
+        return [
+            stage_name
+            for stage_name, config in stages.items()
+            if config.get("enabled", True)
+        ]
+
+    @classmethod
+    def get_stage_config(cls, stage_name: str) -> Dict[str, Any]:
+        """Get configuration for a specific stage."""
+        stages = cls.get_full_config().get("stages", {})
+        if stage_name not in stages:
+            raise ConfigurationError(f"Configuration for stage '{stage_name}' not found")
+        return stages[stage_name]
+
+    @classmethod
+    def get_error_handling_config(cls) -> Dict[str, Any]:
+        """Get error handling configuration."""
+        return cls.get_full_config().get("error_handling", {})
+
+    @classmethod
+    def initialize_model(cls, model_name: str) -> Any:
+        """Initialize a model with appropriate configuration."""
+        model_config = cls.get_model_config(model_name)
+        device = cls.get_device(model_name)
+
+        try:
+            # Initialize model with configuration
+            model_kwargs = {
+                "device_map": "auto" if device == "cuda" else None,
+                "torch_dtype": torch.float16 if device == "cuda" else torch.float32,
+                "cache_dir": cls.get_cache_dir(),
+            }
+
+            model = pipeline(
+                task=model_config.get("task", "text-generation"),
+                model=model_config["repo_id"],
+                tokenizer=model_config["repo_id"],
+                **model_kwargs,
+            )
+
+            logging.info(f"Successfully initialized model {model_name} on {device}")
+            return model
+
+        except Exception as e:
+            raise ConfigurationError(f"Failed to initialize model {model_name}: {str(e)}")
+
+    @classmethod
+    def get_device(cls, model_name: Optional[str] = None) -> str:
+        """Get appropriate device for model or global setting."""
+        if model_name:
+            device = cls.get_model_config(model_name).get("device", "auto")
+        else:
+            device = cls.get_processing_config().get("device", "auto")
+
+        # Handle 'auto' device setting
+        if device == "auto":
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+
+        return device
+
+    @classmethod
+    def get_valid_extensions(cls) -> List[str]:
+        """Retrieve valid file extensions from the configuration."""
+        return cls.get_full_config().get("valid_extensions", [".pdf", ".jpg", ".png"])
+
+    @classmethod
+    def get_data_points(cls) -> Dict[str, Any]:
+        """Retrieve data points from the configuration."""
+        return cls.get_full_config().get("data_points", {})
+
+    @classmethod
+    def should_validate_schema(cls) -> bool:
+        """Check if schema validation is enabled."""
+        schema_config = cls.get_full_config().get("schema", {})
+        return schema_config.get("validate_input", True) or schema_config.get(
+            "validate_output", True
+        )
+
+
+
+
+# -------------------- C:/Users/jorda/OneDrive/Desktop/Quickbase Dev Work/KeystoneEmailParser/src/config/parser_config.yaml --------------------
+
+# Directory where models will be cached
+cache_dir: ".cache"
+
+# Set Logging 
+logging:
+  level: "DEBUG"
+  handlers:
+    - "StreamHandler"
+    - "FileHandler"
+  file_path: "logs/parser.log"
+  create_logs_dir_if_not_exists: true
+
+# Authentication settings
+authentication:
+  hf_token_env_var: "HF_TOKEN"
+
+data_points:
+  "Requesting Party":
+    description: "Information about the requesting party."
+    "Insurance Company":
+      description: "Name of the insurance company."
+      required: true
+      type: "string"
+      enum: ["Allianz", "State Farm", "GEICO"]
+    "Handler":
+      description: "Handler's name and contact information."
+      required: true
+      type: "string"
+    "Carrier Claim Number":
+      description: "Unique claim number assigned by the carrier."
+      required: true
+      type: "string"
+      validation:
+        pattern: "^[A-Z0-9]{6,}$"
+  
+  "Insured Information":
+    "Name":
+      description: "Full name of the insured individual."
+      required: true
+      type: "string"
+    "Contact #":
+      description: "Contact number of the insured."
+      required: true
+      type: "string"
+      validation:
+        pattern: "^\\+?[1-9]\\d{1,14}$"
+    "Loss Address":
+      description: "Address where the loss occurred."
+      required: true
+      type: "string"
+    "Public Adjuster":
+      description: "Information about the public adjuster, if any."
+      required: false
+      type: "string"
+    "Is the insured an Owner or a Tenant of the loss location?":
+      description: "Whether the insured is an owner or tenant."
+      required: true
+      type: "boolean"
+
+  "Adjuster Information":
+    "Adjuster Name":
+      description: "Name of the adjuster."
+      required: true
+      type: "string"
+    "Adjuster Phone Number":
+      description: "Phone number of the adjuster."
+      required: true
+      type: "string"
+      validation:
+        pattern: "^\\+?[1-9]\\d{1,14}$"
+    "Adjuster Email":
+      description: "Email address of the adjuster."
+      required: true
+      type: "string"
+      validation:
+        pattern: "^[\\w\\.-]+@[\\w\\.-]+\\.\\w+$"
+        format: "email"
+    "Job Title":
+      description: "Job title of the adjuster."
+      required: false
+      type: "string"
+    "Address":
+      description: "Address of the adjuster."
+      required: false
+      type: "string"
+    "Policy #":
+      description: "Policy number associated with the claim."
+      required: true
+      type: "string"
+      validation:
+        pattern: "^POL\\d{6}$"
+
+  "Assignment Information":
+    "Date of Loss/Occurrence":
+      description: "Date when the loss or occurrence happened."
+      required: true
+      type: "string"
+      validation:
+        format: "YYYY-MM-DD"
+    "Cause of loss":
+      description: "Cause behind the loss."
+      required: true
+      type: "string"
+    "Facts of Loss":
+      description: "Detailed facts surrounding the loss."
+      required: false
+      type: "string"
+    "Loss Description":
+      description: "Description of the loss."
+      required: true
+      type: "string"
+    "Residence Occupied During Loss":
+      description: "Whether the residence was occupied during the loss."
+      required: true
+      type: "boolean"
+    "Was Someone home at time of damage":
+      description: "Whether someone was home at the time of damage."
+      required: true
+      type: "boolean"
+    "Repair or Mitigation Progress":
+      description: "Progress on repair or mitigation."
+      required: false
+      type: "string"
+    "Type":
+      description: "Type of loss or claim."
+      required: false
+      type: "string"
+      enum: ["Wind", "Structural", "Hail", "Foundation", "Other"]
+    "Inspection type":
+      description: "Type of inspection conducted."
+      required: false
+      type: "string"
+
+  "Assignment Type":
+    "Wind":
+      description: "Wind-related damage."
+      required: false
+      type: "boolean"
+    "Structural":
+      description: "Structural damage."
+      required: false
+      type: "boolean"
+    "Hail":
+      description: "Hail-related damage."
+      required: false
+      type: "boolean"
+    "Foundation":
+      description: "Foundation-related damage."
+      required: false
+      type: "boolean"
+    "Other":
+      description: "Other types of damage."
+      required: false
+      type: "object"
+      properties:
+        "Checked":
+          type: "boolean"
+          required: true
+        "Details":
+          type: "string"
+          required: false
+
+  "Additional details/Special Instructions":
+    description: "Any additional details or special instructions."
+    required: false
+    type: "string"
+
+  "Attachment(s)":
+    description: "List of attachments related to the email."
+    required: false
+    type: "array"
+    items:
+      type: "string"
+      format: "uri"
+
+  "Entities":
+    description: "Entity extraction results"
+    required: false
+    type: "object"
+    additionalProperties:
+      type: "array"
+      items:
+        type: "string"
+
+  "TransformerEntities":
+    description: "Transformer model entity extraction results"
+    required: false
+    type: "object"
+    additionalProperties:
+      type: "array"
+      items:
+        type: "string"
+
+  "missing_fields":
+    description: "List of missing required fields"
+    required: false
+    type: "array"
+    items:
+      type: "string"
+
+  "inconsistent_fields":
+    description: "List of fields with inconsistent values"
+    required: false
+    type: "array"
+    items:
+      type: "string"
+
+  "user_notifications":
+    description: "User notifications and warnings"
+    required: false
+    type: "array"
+    items:
+      type: "string"
+
+# Model configurations remain the same as in original file
+models:
+  donut:
+    repo_id: "naver-clova-ix/donut-base-finetuned-cord-v2"
+    task: "document-question-answering"
+    device: "auto"
+    torch_dtype: "float16"
+    timeout: 60
+    max_length: 1024
+    logging_level: "INFO"
+
+  llama:
+    repo_id: "meta-llama/Llama-3.2-3B-Instruct"
+    task: "text-generation"
+    device: "auto"
+    torch_dtype: "float16"
+    max_length: 1024
+    logging_level: "INFO"
+    prompt_templates:
+      text_extraction: |
+        Respond only with a JSON object, no other text.
+        The JSON must exactly match this schema, with all fields included:
+        
+        {
+          "Requesting Party": {
+            "Insurance Company": "string (enum: Allianz, State Farm, GEICO)",
+            "Handler": "string",
+            "Carrier Claim Number": "string (pattern: ^[A-Z0-9]{6,}$)"
+          },
+          "Insured Information": {
+            "Name": "string",
+            "Contact #": "string (pattern: ^\\+?[1-9]\\d{1,14}$)",
+            "Loss Address": "string",
+            "Public Adjuster": "string",
+            "Is the insured an Owner or a Tenant of the loss location?": "boolean"
+          },
+          "Adjuster Information": {
+            "Adjuster Name": "string",
+            "Adjuster Phone Number": "string (pattern: ^\\+?[1-9]\\d{1,14}$)",
+            "Adjuster Email": "string (email format)",
+            "Job Title": "string",
+            "Address": "string",
+            "Policy #": "string (pattern: ^POL\\d{6}$)"
+          },
+          "Assignment Information": {
+            "Date of Loss/Occurrence": "date (YYYY-MM-DD)",
+            "Cause of loss": "string",
+            "Facts of Loss": "string",
+            "Loss Description": "string",
+            "Residence Occupied During Loss": "boolean",
+            "Was Someone home at time of damage": "boolean",
+            "Repair or Mitigation Progress": "string",
+            "Type": "string (enum: Wind, Structural, Hail, Foundation, Other)",
+            "Inspection type": "string"
+          },
+          "Assignment Type": {
+            "Wind": "boolean",
+            "Structural": "boolean",
+            "Hail": "boolean",
+            "Foundation": "boolean",
+            "Other": {
+              "Checked": "boolean",
+              "Details": "string"
+            }
+          },
+          "Additional details/Special Instructions": "string",
+          "Attachment(s)": "array of strings (uri format)",
+          "Entities": "object with string array values",
+          "TransformerEntities": "object with string array values",
+          "missing_fields": "array of strings",
+          "inconsistent_fields": "array of strings",
+          "user_notifications": "array of strings"
+        }
+        
+        Include "N/A" for any missing values.
+        Format all dates as YYYY-MM-DD.
+        Use true/false for boolean values.
+        
+        Email content to parse:
+        {{ email_content }}
+
+      validation: |
+        Validate the extracted information against the original email content.
+        Check for:
+        1. Required fields presence
+        2. Correct data types and formats
+        3. Valid enum values where specified
+        4. Pattern matching for formatted fields
+        5. Proper date formatting (YYYY-MM-DD)
+        6. Boolean value consistency
+        7. Valid email and phone number formats
+        8. Policy number format validation
+        9. Carrier claim number format validation
+        
+        Flag any inconsistencies or missing required fields.
+
+      summarization: |
+        Summarize the provided information, focusing on:
+        - Key points regarding the loss
+        - Adjuster and insured information
+        - Important dates and events
+        - Public adjuster involvement
+        - Inspection details and types
+        - Any special instructions or additional details
+        - Missing or inconsistent information
+        - Required follow-up items
+      
+      system_prompt: |
+        You are an advanced data extraction assistant. Extract information from the provided email content and output it strictly in JSON format according to the defined schema. Ensure:
+        1. All required fields are present
+        2. Correct data types and formats
+        3. "N/A" for missing optional fields
+        4. YYYY-MM-DD date format
+        5. Boolean values as true/false
+        6. Valid enum values where specified
+        7. Pattern matching for formatted fields
+        8. Complete validation of all extracted data
+
+# Processing configurations
+processing:
+  batch_size: 1
+
+# Stage configurations
+stages:
+  email_parsing:
+    enabled: true
+    timeout: 30
+  donut_parsing:
+    enabled: true
+    timeout: 60
+  text_extraction:
+    enabled: true
+    timeout: 200
+  validation:
+    enabled: true
+    timeout: 60
+  summarization:
+    enabled: true
+    timeout: 90
+  post_processing:
+    enabled: true
+    timeout: 90
+  json_validation:
+    enabled: true
+    timeout: 90
+
+# Schema validation settings
+schema:
+  validate_input: true
+  validate_output: true
+
+# Error handling
+error_handling:
+  max_retries: 5
+  retry_delay: 2.0
+  fallback_enabled: true
+
+# Field validation rules
+field_validation:
+  date_format: "YYYY-MM-DD"
+  phone_number_pattern: "^\\+?[1-9]\\d{1,14}$"
+  email_pattern: "^[\\w\\.-]+@[\\w\\.-]+\\.\\w+$"
+  policy_number_pattern: "^POL\\d{6}$"
+  carrier_claim_pattern: "^[A-Z0-9]{6,}$"
+  boolean_handling:
+    true_values: ["yes", "true", "1", "checked", "on"]
+    false_values: ["no", "false", "0", "unchecked", "off"]
+
+
+
+
+
+# -------------------- C:/Users/jorda/OneDrive/Desktop/Quickbase Dev Work/KeystoneEmailParser/src/email_parsing.py --------------------
+
+from src.parsers.parser_registry import ParserRegistry
+from src.parsers.parser_options import ParserOption
+from src.utils.validation import validate_json
+from typing import Dict, Any
+
+
+class EmailParser:
+    """
+    EmailParser handles the selection and usage of different parsing strategies.
+    """
+
+    def __init__(self):
+        self.parser_instance = None
+
+    def parse_email(self, email_content: str, parser_option: ParserOption, socketio, sid) -> Dict[str, Any]:
+        """
+        Parse the email content using the specified parser option.
+
+        Args:
+            email_content (str): The raw email content to parse.
+            parser_option (ParserOption): The parser option to use.
+            socketio: The SocketIO instance for emitting events.
+            sid: The session ID of the connected client.
+
+        Returns:
+            Dict[str, Any]: Parsed data as a dictionary.
+        """
+        if not isinstance(parser_option, ParserOption):
+            raise TypeError("parser_option must be an instance of ParserOption Enum.")
+
+        self.parser_instance = ParserRegistry.get_parser(parser_option, socketio=socketio, sid=sid)
+        parsed_data = self.parser_instance.parse(email_content)
+
+        # Validate the parsed data against a JSON schema
+        is_valid, error_message = validate_json(parsed_data)
+        if not is_valid:
+            raise ValueError(f"Parsed data validation failed: {error_message}")
+
+        return parsed_data
+
+    # Optional: Implement CSV conversion if required
+    # def convert_to_csv(self, parsed_data: dict) -> Tuple[str, str]:
+    #     # Conversion logic here
+    #     pass
+
+
+
+
+# -------------------- C:/Users/jorda/OneDrive/Desktop/Quickbase Dev Work/KeystoneEmailParser/.vscode/settings.json --------------------
+
+{
+    "git.ignoreLimitWarning": true
+}
+
+
+
+# -------------------- C:/Users/jorda/OneDrive/Desktop/Quickbase Dev Work/KeystoneEmailParser/app.py --------------------
+
+# src/app.py
+
+import os
+import io
+import sys
+import torch
+import signal
+from pathlib import Path
+import logging
+import traceback
+from datetime import datetime, timezone
+from typing import Dict, Any, Optional
+
+import json_log_formatter
+from flask import Flask, render_template, request, jsonify, send_from_directory
+from flask_socketio import SocketIO
+from dotenv import load_dotenv
+from PIL import Image
+import numpy as np
+import asyncio
+
+from src.parsers.enhanced_parser import EnhancedParser
+from src.parsers.parser_options import ParserOption
+from src.parsers.parser_registry import ParserRegistry
+from src.utils.config import Config
+from src.utils.exceptions import InitializationError
+
+
+# Set memory fraction to 90% of total GPU memory
+torch.cuda.set_per_process_memory_fraction(0.9)
+
+# Clear the FFT plan cache for potentially faster CUDA operations
+torch.backends.cuda.cufft_plan_cache.clear()
+
+
+def setup_logging() -> logging.Logger:
+    formatter = json_log_formatter.JSONFormatter()
+    json_handler = logging.StreamHandler()
+    json_handler.setFormatter(formatter)
+    logger = logging.getLogger("AppLogger")
+    logger.addHandler(json_handler)
+    logger.setLevel(logging.DEBUG)
+    return logger
+
+
+def init_app() -> (Flask, SocketIO):
+    load_dotenv()
+    app = Flask(__name__, static_folder='static', template_folder='templates')
+    socketio = SocketIO(
+        app,
+        cors_allowed_origins="*",
+        logger=True,
+        engineio_logger=True,
+        async_mode="threading",
+    )
+    return app, socketio
+
+
+def setup_cache_dirs(logger: logging.Logger):
+    cache_dir = str(Path("D:/AiHub"))
+    os.environ["HF_HOME"] = cache_dir
+    os.makedirs(cache_dir, exist_ok=True)
+    logger.info("Cache directory set to: %s", cache_dir)
+
+    if torch.cuda.is_available():
+        logger.info("CUDA available: %s", torch.cuda.get_device_name(0))
+    else:
+        logger.info("CUDA not available, using CPU")
+
+
+logger = setup_logging()
+app, socketio = init_app()
+
+
+def format_schema_output(formatted_data: Dict[str, Any]) -> str:
+    output = []
+    for section, fields in formatted_data.items():
+        output.append(section)
+        output.append("")
+        for field, value in fields.items():
+            output.append(f"{field}: {value}")
+        output.append("")
+    return "\n".join(output)
+
+
+def make_serializable(obj: Any) -> Any:
+    if isinstance(obj, (np.float32, np.float64)):
+        return float(obj)
+    elif isinstance(obj, (np.int32, np.int64)):
+        return int(obj)
+    elif isinstance(obj, dict):
+        return {k: make_serializable(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [make_serializable(element) for element in obj]
+    elif isinstance(obj, tuple):
+        return tuple(make_serializable(element) for element in obj)
+    elif isinstance(obj, set):
+        return [make_serializable(element) for element in obj]
+    elif isinstance(obj, (float, int, str)):
+        return obj
+    else:
+        return str(obj)
+
+
+def background_parse(
+    sid: str,
+    parser_option: str,
+    email_content: str,
+    document_image: Optional[Image.Image],
+):
+    # Create event loop for this thread
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    try:
+        input_type = None
+        if email_content and document_image:
+            input_type = 'both'
+        elif email_content:
+            input_type = 'text'
+        elif document_image:
+            input_type = 'image'
+
+        parser = ParserRegistry.get_parser(
+            parser_option=ParserOption(parser_option),
+            socketio=socketio,
+            sid=sid,
+        )
+        if parser is None:
+            socketio.emit(
+                "parsing_error", {"error": f"Parser for option {parser_option} not found."}, room=sid
+            )
+            return
+
+        with parser:
+            if not parser.is_initialized:
+                parser.initialize(input_type=input_type)
+            if not parser.health_check():
+                socketio.emit(
+                    "parsing_error", {"error": "Parser health check failed."}, room=sid
+                )
+                return
+
+            socketio.emit(
+                "parsing_started", {"message": "Parsing started..."}, room=sid
+            )
+
+            stages = [
+                {"stage": "Initializing parser", "progress": 10},
+                {"stage": "Processing email content", "progress": 30},
+                {"stage": "Extracting entities", "progress": 50},
+                {"stage": "Finalizing results", "progress": 80},
+                {"stage": "Completed", "progress": 100},
+            ]
+
+            for step in stages:
+                socketio.emit(
+                    "parsing_progress",
+                    {"stage": step["stage"], "progress": step["progress"]},
+                    room=sid,
+                )
+                socketio.sleep(1)
+
+            result = parser.parse_email(
+                email_content=email_content, document_image=document_image
+            )
+
+            # Handle structured_data and metadata
+            structured_data = result.get("structured_data", {})
+            metadata = result.get("metadata", {})
+
+            # Optionally, log or use metadata
+            logger.debug("Metadata from parsing: %s", metadata)
+
+            if "email_metadata" in structured_data:
+                formatted_text = format_schema_output(structured_data["email_metadata"])
+                structured_data["formatted_schema"] = formatted_text
+
+            serializable_result = make_serializable(structured_data)
+            logger.debug("Serialized Result: %s", serializable_result)
+
+            socketio.emit(
+                "parsing_completed", {"result": serializable_result}, room=sid
+            )
+
+    except Exception as e:
+        logger.error("Error during parsing: %s", e, exc_info=True)
+        error_info = {
+            "type": "unexpected_error",
+            "message": f"An unexpected error occurred: {str(e)}",
+            "time": datetime.now(timezone.utc).isoformat(),
+            "exc_info": traceback.format_exc(),
+        }
+        serializable_error = make_serializable(error_info)
+        socketio.emit("parsing_error", {"error": serializable_error}, room=sid)
+    finally:
+        loop.close()
+
+
+@app.route("/", methods=["GET"])
+def index():
+    logger.info("Rendering index page.")
+    return render_template("index.html")
+
+
+@app.route("/favicon.ico")
+def favicon_route():
+    favicon_path = os.path.join(app.root_path, "static", "favicon.ico")
+    if os.path.exists(favicon_path):
+        return send_from_directory(
+            os.path.join(app.root_path, "static"),
+            "favicon.ico",
+            mimetype="image/vnd.microsoft.icon",
+        )
+    logger.warning("favicon.ico not found at path: %s", favicon_path)
+    return jsonify({"error_message": "favicon.ico not found."}), 404
+
+
+@app.route("/parse_email", methods=["POST"])
+def parse_email_route():
+    email_content = request.form.get("email_content", "").strip()
+    image_file = request.files.get("document_image")
+    parser_option_str = request.form.get("parser_option", "").strip()
+    socket_id = request.form.get("socket_id")
+
+    if not email_content and not image_file:
+        logger.warning("No email content or document image provided.")
+        return (
+            jsonify(
+                {"error_message": "Please provide email content or document image"}
+            ),
+            400,
+        )
+
+    if not parser_option_str:
+        logger.warning("No parser option selected.")
+        return jsonify({"error_message": "Please select a parser option."}), 400
+
+    sid = socket_id
+    if not sid:
+        logger.warning("No socket ID provided.")
+        return jsonify({"error_message": "Socket ID not provided."}), 400
+
+    logger.info("Received Socket ID: %s", sid)
+
+    try:
+        parser_option = ParserOption(parser_option_str)
+    except ValueError:
+        logger.warning("Invalid parser option selected: %s", parser_option_str)
+        return (
+            jsonify({"error_message": f"Invalid parser option: {parser_option_str}"}),
+            400,
+        )
+
+    try:
+        # Adjusted get_parser call without 'input_type'
+        parser_config = ParserRegistry.get_parser(parser_option, socketio=socketio, sid=sid)
+    except InitializationError as ie:
+        logger.error("Parser initialization failed: %s", ie)
+        return jsonify({"error_message": str(ie)}), 500
+    except Exception as e:
+        logger.error(
+            "Unexpected error during parser initialization: %s", e, exc_info=True
+        )
+        return jsonify({"error_message": "Parser initialization failed"}), 500
+
+    if parser_config is None:
+        logger.error("Parser could not be initialized.")
+        return jsonify({"error_message": "Parser could not be initialized"}), 500
+
+    document_image = None
+    if image_file:
+        try:
+            document_image = Image.open(io.BytesIO(image_file.read()))
+        except Exception as e:
+            logger.error("Image processing failed: %s", e, exc_info=True)
+            return jsonify({"error_message": "Invalid image format"}), 400
+
+    socketio.start_background_task(
+        background_parse, sid, parser_option_str, email_content, document_image
+    )
+
+    logger.info("Parsing started for Socket ID: %s", sid)
+    return jsonify({"message": "Parsing started"}), 202
+
+
+@app.route("/health", methods=["GET"])
+def health_check_route():
+    try:
+        status = ParserRegistry.health_check()
+        logger.info("Health check passed.")
+        return jsonify({"status": "healthy", "parsers": status}), 200
+    except Exception as e:
+        logger.error("Health check failed: %s", e, exc_info=True)
+        return jsonify({"status": "unhealthy", "error": str(e)}), 500
+
+
+@socketio.on("connect")
+def handle_connect():
+    sid = request.sid
+    logger.info("Client connected: %s", sid)
+
+
+@socketio.on("disconnect")
+def handle_disconnect():
+    sid = request.sid
+    logger.info("Client disconnected: %s", sid)
+
+
+@app.errorhandler(Exception)
+def handle_exception(e: Exception):
+    logger.error("Unhandled exception: %s", e, exc_info=True)
+    return jsonify({"error_message": "An internal error occurred."}), 500
+
+
+@app.errorhandler(404)
+def page_not_found(e: Exception):
+    logger.warning("404 error: %s not found. Exception: %s", request.url, e)
+    return (
+        jsonify({"error_message": "The requested URL was not found on the server."}),
+        404,
+    )
+
+
+def signal_handler(_sig, _frame):
+    try:
+        logger.info("Shutdown initiated...")
+        ParserRegistry.cleanup_parsers()
+        logger.info("Cleanup completed successfully.")
+    except Exception as e:
+        logger.error("Error during cleanup: %s", e, exc_info=True)
+    finally:
+        sys.exit(0)
+
+
+if __name__ == "__main__":
+    try:
+        logger.info("Starting application initialization...")
+
+        setup_cache_dirs(logger)
+
+        logger.info("Loading configuration...")
+        Config.initialize()
+        logger.info("Configuration loaded successfully")
+
+        host = os.getenv("HOST", "127.0.0.1")
+        port = int(os.getenv("PORT", "5000"))
+        logger.info("Server will start on %s:%d", host, port)
+
+        static_dir = os.path.join(app.root_path, "static")
+        if not os.path.exists(static_dir):
+            os.makedirs(static_dir)
+            logger.info("Created static directory at %s", static_dir)
+
+        ParserRegistry.initialize_parsers()
+        logger.info("Parsers initialized successfully")
+
+        # Register signal handlers for graceful shutdown
+        signal.signal(signal.SIGINT, signal_handler)
+        signal.signal(signal.SIGTERM, signal_handler)
+
+        socketio.run(app, host=host, port=port, debug=True, use_reloader=False, allow_unsafe_werkzeug=True)
+    except InitializationError as ie:
+        logger.critical(
+            "Parser initialization failed during startup: %s", ie, exc_info=True
+        )
+        try:
+            ParserRegistry.cleanup_parsers()
+        except Exception as cleanup_e:
+            logger.error(
+                "Error during cleanup after failed startup: %s",
+                cleanup_e,
+                exc_info=True,
+            )
+        sys.exit(1)
+    except Exception as e:
+        logger.critical("Failed to start the Flask application: %s", e, exc_info=True)
+        try:
+            ParserRegistry.cleanup_parsers()
+        except Exception as cleanup_e:
+            logger.error(
+                "Error during cleanup after failed startup: %s",
+                cleanup_e,
+                exc_info=True,
+            )
+        sys.exit(1)
+
+
+
+
+# -------------------- C:/Users/jorda/OneDrive/Desktop/Quickbase Dev Work/KeystoneEmailParser/package.json --------------------
+
+{
+  "name": "keystone-email-parser",
+  "version": "1.0.0",
+  "description": "Email parsing application with React frontend",
+  "main": "static/js/main.js",
+  "scripts": {
+    "start": "concurrently \"python app.py\" \"webpack serve --mode development\"",
+    "start:frontend": "webpack serve --mode development",
+    "start:backend": "python app.py",
+    "build": "webpack --mode development",
+    "build:prod": "webpack --mode production",
+    "watch": "webpack --watch --mode development",
+    "clean": "del-cli static/dist/*",
+    "lint": "eslint src/**/*.{js,jsx}",
+    "test": "echo \"No tests specified\" && exit 0"
+  },
+  "dependencies": {
+    "@babel/runtime": "^7.22.5",
+    "@headlessui/react": "^2.2.0",
+    "@reduxjs/toolkit": "^1.9.5",
+    "file-saver": "^2.0.5",
+    "jspdf": "^2.5.1",
+    "lodash": "^4.17.21",
+    "lottie-web": "^5.12.2",
+    "lucide-react": "^0.263.1",
+    "prop-types": "^15.8.1",
+    "react": "^18.2.0",
+    "react-copy-to-clipboard": "^5.1.0",
+    "react-dom": "^18.2.0",
+    "react-focus-lock": "^2.13.2",
+    "react-redux": "^8.1.1",
+    "react-syntax-highlighter": "^15.6.1",
+    "recharts": "^2.5.0",
+    "redux": "^4.2.1",
+    "redux-thunk": "^2.4.2",
+    "socket.io-client": "^4.5.4"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.26.0",
+    "@babel/plugin-proposal-class-properties": "^7.18.6",
+    "@babel/plugin-transform-runtime": "^7.25.9",
+    "@babel/preset-env": "^7.26.0",
+    "@babel/preset-react": "^7.25.9",
+    "autoprefixer": "^10.4.20",
+    "babel-loader": "^9.2.1",
+    "concurrently": "^9.0.1",
+    "cross-env": "^7.0.3",
+    "css-loader": "^6.11.0",
+    "del-cli": "^6.0.0",
+    "eslint": "^8.56.0",
+    "eslint-plugin-react": "^7.33.2",
+    "eslint-plugin-react-hooks": "^4.6.0",
+    "mini-css-extract-plugin": "^2.9.1",
+    "postcss": "^8.4.47",
+    "postcss-loader": "^7.3.4",
+    "rimraf": "^5.0.5",
+    "style-loader": "^3.3.4",
+    "tailwindcss": "^3.4.14",
+    "webpack": "^5.95.0",
+    "webpack-cli": "^5.1.4",
+    "webpack-dev-server": "^4.15.0"
+  },
+  "browser": {
+    "@": "./static",
+    "@components": "./static/components",
+    "@actions": "./static/js/actions",
+    "@reducers": "./static/js/reducers",
+    "@core": "./static/js/core",
+    "@utils": "./static/js/utils",
+    "@ui": "./static/js/ui",
+    "@css": "./static/css"
+  },
+  "engines": {
+    "node": ">=14.0.0",
+    "npm": ">=6.0.0"
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
+  }
+}
+
+
+
+
+# -------------------- C:/Users/jorda/OneDrive/Desktop/Quickbase Dev Work/KeystoneEmailParser/webpack.config.js --------------------
+
+const path = require('path');
+const MiniCssExtractPlugin = require('mini-css-extract-plugin');
+
+module.exports = {
+  mode: 'development',
+  entry: './static/js/main.js',
+  output: {
+    path: path.resolve(__dirname, 'static/dist'),
+    filename: 'bundle.js',
+    publicPath: '/static/dist/',
+  },
+  devServer: {
+    static: [
+      {
+        directory: path.join(__dirname, 'static'),
+        publicPath: '/static'
+      },
+      {
+        directory: path.join(__dirname, 'templates'),
+        publicPath: '/'
+      }
+    ],
+    compress: true,
+    port: 8080,
+    hot: true,
+    historyApiFallback: true,
+    proxy: {
+      '/api': 'http://localhost:5000',
+      '/socket.io': {
+        target: 'http://localhost:5000',
+        ws: true
+      }
+    }
+  },
+  module: {
+    rules: [
+      {
+        test: /\.(js|jsx)$/,
+        exclude: /node_modules/,
+        use: {
+          loader: 'babel-loader'
+        }
+      },
+      {
+        test: /\.css$/,
+        use: [
+          MiniCssExtractPlugin.loader,
+          {
+            loader: 'css-loader',
+            options: {
+              importLoaders: 1
+            }
+          },
+          'postcss-loader'
+        ]
+      }
+    ]
+  },
+  resolve: {
+    extensions: ['.js', '.jsx', '.css'],
+    alias: {
+      '@': path.resolve(__dirname, 'static'),
+      '@components': path.resolve(__dirname, 'static/components'),
+      '@actions': path.resolve(__dirname, 'static/js/actions'),
+      '@reducers': path.resolve(__dirname, 'static/js/reducers'),
+      '@core': path.resolve(__dirname, 'static/js/core'),
+      '@utils': path.resolve(__dirname, 'static/js/utils'),
+      '@ui': path.resolve(__dirname, 'static/js/ui'),
+      '@css': path.resolve(__dirname, 'static/css')
+    },
+    fallback: {
+      "path": false,
+      "fs": false
+    }
+  },
+  plugins: [
+    new MiniCssExtractPlugin({
+      filename: 'styles.css'
+    })
+  ],
+  externals: {
+    'socket.io-client': 'io',
+    'lucide': 'lucide',
+    'jspdf': {
+      commonjs: 'jspdf',
+      commonjs2: 'jspdf',
+      amd: 'jspdf',
+      root: 'jsPDF'
+    },
+    'lottie-web': 'bodymovin'
+  }
+};
+
+
+
+# -------------------- C:/Users/jorda/OneDrive/Desktop/Quickbase Dev Work/KeystoneEmailParser/jsconfig.json --------------------
+
+{
+    "compilerOptions": {
+      "baseUrl": ".",
+      "paths": {
+        "@/*": ["static/*"],
+        "@components/*": ["static/components/*"],
+        "@actions/*": ["static/js/actions/*"],
+        "@reducers/*": ["static/js/reducers/*"],
+        "@core/*": ["static/js/core/*"],
+        "@utils/*": ["static/js/utils/*"],
+        "@ui/*": ["static/js/ui/*"],
+        "@css/*": ["static/css/*"]
+      }
+    }
+  }
+
+
+
+# -------------------- C:/Users/jorda/OneDrive/Desktop/Quickbase Dev Work/KeystoneEmailParser/.babelrc --------------------
+
+{
+  "presets": [
+    ["@babel/preset-env", {
+      "targets": {
+        "browsers": [">0.25%", "not ie 11", "not op_mini all"]
+      }
+    }],
+    "@babel/preset-react"
+  ],
+  "plugins": [
+    "@babel/plugin-proposal-class-properties",
+    "@babel/plugin-transform-runtime"
+  ]
+}
+
+
+
+# -------------------- C:/Users/jorda/OneDrive/Desktop/Quickbase Dev Work/KeystoneEmailParser/postcss.config.js --------------------
+
+// postcss.config.js
+module.exports = {
+    plugins: {
+      'tailwindcss': {},
+      'autoprefixer': {},
+    }
+  };
+
+
+
+# -------------------- C:/Users/jorda/OneDrive/Desktop/Quickbase Dev Work/KeystoneEmailParser/tailwind.config.js --------------------
+
+// tailwind.config.js
+module.exports = {
+    content: [
+      './static/components/**/*.{js,jsx}',
+      './templates/**/*.html',
+    ],
+    darkMode: 'class',
+    theme: {
+      extend: {},
+    },
+    plugins: [],
+  };
+
+
+
+# -------------------- C:/Users/jorda/OneDrive/Desktop/Quickbase Dev Work/KeystoneEmailParser/importSchema.json --------------------
+
+{
+  "RequestingParty": {
+    "InsuranceCompany": "",
+    "Handler": "",
+    "CarrierClaimNumber": ""
+  },
+  "InsuredInformation": {
+    "Name": "",
+    "ContactNumber": "",
+    "LossAddress": "",
+    "PublicAdjuster": "",
+    "OwnershipStatus": ""
+  },
+  "AdjusterInformation": {
+    "AdjusterName": "",
+    "AdjusterPhoneNumber": "",
+    "AdjusterEmail": "",
+    "JobTitle": "",
+    "Address": "",
+    "PolicyNumber": ""
+  },
+  "AssignmentInformation": {
+    "DateOfLoss": "",
+    "CauseOfLoss": "",
+    "FactsOfLoss": "",
+    "LossDescription": "",
+    "ResidenceOccupiedDuringLoss": "",
+    "WasSomeoneHomeAtTimeOfDamage": "",
+    "RepairOrMitigationProgress": "",
+    "Type": "",
+    "InspectionType": ""
+  },
+  "AssignmentType": {
+    "Wind": false,
+    "Structural": false,
+    "Hail": false,
+    "Foundation": false,
+    "Other": {
+      "isChecked": false,
+      "details": ""
+    }
+  },
+  "AdditionalDetails": "",
+  "Attachments": []
+}
+
+
+
+
+# -------------------- C:/Users/jorda/OneDrive/Desktop/Quickbase Dev Work/KeystoneEmailParser/requirements.txt --------------------
+
+accelerate==1.0.1
+aiohttp==3.8.2
+alpaca-trade-api==3.0.2
+annotated-types==0.7.0
+astroid==3.3.5
+asttokens==2.2.1
+attrs==24.2.0
+backcall==0.2.0
+beautifulsoup4==4.12.3
+bidict==0.23.1
+bleach==6.1.0
+blinker==1.8.2
+blis==1.0.1
+cachetools==5.5.0
+catalogue==2.0.10
+certifi==2024.8.30
+charset-normalizer==2.1.1
+click==8.1.7
+cloudpathlib==0.20.0
+colorama==0.4.6
+comm==0.1.3
+confection==0.1.5
+cymem==2.0.8
+debugpy==1.6.7
+decorator==5.1.1
+defusedxml==0.7.1
+diffusers==0.19.3
+dill==0.3.9
+dnspython==2.7.0
+docopt==0.6.2
+en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl#sha256=1932429db727d4bff3deed6b34cfc05df17794f4a52eeb26cf8928f7c1a0fb85
+executing==1.2.0
+fastjsonschema==2.20.0
+filelock==3.16.1
+Flask==3.0.3
+Flask-SocketIO==5.4.1
+fsspec==2024.10.0
+greenlet==3.1.1
+h11==0.14.0
+huggingface-hub==0.26.1
+idna==3.10
+invisible-watermark==0.2.0
+ipykernel==6.23.2
+ipython==8.12.3
+isort==5.13.2
+itsdangerous==2.2.0
+jedi==0.18.2
+Jinja2==3.1.4
+JSON-log-formatter==1.1
+jsonschema==4.23.0
+jsonschema-specifications==2024.10.1
+jupyter_client==8.2.0
+jupyter_core==5.3.1
+jupyterlab_pygments==0.3.0
+langcodes==3.4.1
+language_data==1.2.0
+marisa-trie==1.2.1
+markdown-it-py==3.0.0
+MarkupSafe==3.0.2
+matplotlib-inline==0.1.6
+mccabe==0.7.0
+mdurl==0.1.2
+mistune==3.0.2
+mpmath==1.3.0
+msgpack==1.1.0
+murmurhash==1.0.10
+nbclient==0.10.0
+nbconvert==7.16.4
+nbformat==5.10.4
+nest-asyncio==1.5.6
+networkx==3.1
+numpy==1.24.3
+opencv-python==4.8.0.74
+packaging==24.1
+pandas==2.2.3
+pandocfilters==1.5.1
+parso==0.8.3
+phonenumbers==8.13.48
+pickleshare==0.7.5
+pillow==11.0.0
+pipeline==0.1.0
+pipreqs==0.5.0
+platformdirs==4.3.6
+preshed==3.0.9
+prompt-toolkit==3.0.38
+protobuf==5.28.3
+psutil==5.9.5
+pure-eval==0.2.2
+pydantic==2.9.2
+pydantic_core==2.23.4
+Pygments==2.15.1
+pylint==3.3.1
+python-dateutil==2.9.0.post0
+python-dotenv==1.0.1
+python-engineio==4.10.1
+python-socketio==5.11.4
+pytz==2024.2
+PyWavelets==1.4.1
+pywin32==308
+PyYAML==6.0.2
+pyzmq==25.1.0
+RapidFuzz==3.10.1
+referencing==0.35.1
+regex==2024.9.11
+requests==2.32.3
+rich==13.9.3
+rpds-py==0.20.0
+safetensors==0.4.5
+sentencepiece==0.2.0
+shellingham==1.5.4
+simple-websocket==1.1.0
+six==1.16.0
+smart-open==7.0.5
+soupsieve==2.6
+spacy==3.8.2
+spacy-legacy==3.0.12
+spacy-loggers==1.0.5
+srsly==2.4.8
+stack-data==0.6.2
+sympy==1.13.1
+thefuzz==0.22.1
+thinc==8.3.2
+tinycss2==1.4.0
+tokenizers==0.20.1
+tomlkit==0.13.2
+torch==2.0.1+cu118
+torchaudio==2.0.2+cu118
+torchvision==0.15.2+cu118
+tornado==6.3.2
+tqdm==4.66.5
+traitlets==5.9.0
+transformers==4.46.0
+typer==0.12.5
+typing_extensions==4.12.2
+tzdata==2024.2
+urllib3==2.2.3
+utils==1.0.2
+wasabi==1.1.3
+watchdog==5.0.3
+wcwidth==0.2.6
+weasel==0.4.1
+webencodings==0.5.1
+websocket-client==1.8.0
+websockets==13.1
+Werkzeug==3.0.4
+wrapt==1.16.0
+wsproto==1.2.0
+yarg==0.1.9
+
+
+
+
+# -------------------- C:/Users/jorda/OneDrive/Desktop/Quickbase Dev Work/KeystoneEmailParser/.env --------------------
+
+# .env
+
+# OpenAI API Key
+OPENAI_API_KEY=your_openai_api_key
+
+# Local LLM API Endpoint
+LOCAL_LLM_API_ENDPOINT=http://localhost:3000/v1/completions
+
+# Ai Tings
+HF_TOKEN=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
+HF_HOME=D:\AiHub
+TRANSFORMERS_CACHE=D:\AiHub
+
+# Model configuration
+MODEL_TIMEOUT=500
+BATCH_SIZE=1
+MODEL_RETRIES=3
+
+# CUDA settings
+CUDA_VISIBLE_DEVICES=0  # Use first GPU
+PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:6144
+torch.cuda.set_per_process_memory_fraction(0.9)
+torch.backends.cuda.cufft_plan_cache.clear()
+
+
+
