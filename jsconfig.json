@@ -1,15 +1,19 @@
 {
-    "compilerOptions": {
-      "baseUrl": ".",
-      "paths": {
-        "@/*": ["static/*"],
-        "@components/*": ["static/components/*"],
-        "@actions/*": ["static/js/actions/*"],
-        "@reducers/*": ["static/js/reducers/*"],
-        "@core/*": ["static/js/core/*"],
-        "@utils/*": ["static/js/utils/*"],
-        "@ui/*": ["static/js/ui/*"],
-        "@css/*": ["static/css/*"]
-      }
-    }
-  }
+  "compilerOptions": {
+    "target": "ES6",
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["frontend/*"],
+      "@components/*": ["frontend/components/*"],
+      "@actions/*": ["frontend/actions/*"],
+      "@reducers/*": ["frontend/reducers/*"],
+      "@core/*": ["frontend/core/*"],
+      "@utils/*": ["frontend/utils/*"],
+      "@css/*": ["frontend/static/css/*"]
+    },
+    "allowSyntheticDefaultImports": true,
+    "jsx": "react"
+  },
+  "include": ["frontend/**/*"],
+  "exclude": ["node_modules", "static/dist", "**/*.test.js"]
+}

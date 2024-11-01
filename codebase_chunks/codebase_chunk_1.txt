@@ -1,0 +1,1138 @@
+
+
+# -------------------- C:\Users\jorda\OneDrive\Desktop\Quickbase Dev Work\KeystoneEmailParser\frontend\App.jsx --------------------
+
+// frontend/App.jsx
+/**
+ * App component serves as the root of the application.
+ * It includes the Header, ParserForm, ProgressBar, ResultViewer, and ToastContainer.
+ */
+const App = () => {
+  const parsingProgress = useSelector((state) => state.parsing.parsingProgress);
+  const parsingResult = useSelector((state) => state.parsing.parsingResult);
+  return (
+    <div className="min-h-screen bg-gray-100">
+      <Header />
+      <main className="container mx-auto p-4">
+        <ParserForm />
+        {parsingProgress && <ProgressBar />}
+        {parsingResult && <ResultViewer />}
+      </main>
+      <ToastContainer />
+    </div>
+  );
+};
+export default App;
+
+
+
+
+# -------------------- C:\Users\jorda\OneDrive\Desktop\Quickbase Dev Work\KeystoneEmailParser\frontend\index.js --------------------
+
+// frontend/index.js
+const container = document.getElementById('root');
+const root = createRoot(container); // Create a root
+root.render(
+  <Provider store={store}>
+    <App />
+  </Provider>
+);
+
+
+
+
+# -------------------- C:\Users\jorda\OneDrive\Desktop\Quickbase Dev Work\KeystoneEmailParser\frontend\components\App.jsx --------------------
+
+
+
+
+
+# -------------------- C:\Users\jorda\OneDrive\Desktop\Quickbase Dev Work\KeystoneEmailParser\frontend\components\common\Modal.jsx --------------------
+
+
+
+
+
+# -------------------- C:\Users\jorda\OneDrive\Desktop\Quickbase Dev Work\KeystoneEmailParser\frontend\components\common\Header.jsx --------------------
+
+// frontend/components/common/Header.jsx
+/**
+ * Header component displays the application's title.
+ */
+const Header = () => (
+  <header className="bg-white shadow">
+    <div className="container mx-auto p-4">
+      <h1 className="text-xl font-bold">Email Parsing App</h1>
+    </div>
+  </header>
+);
+export default Header;
+
+
+
+
+# -------------------- C:\Users\jorda\OneDrive\Desktop\Quickbase Dev Work\KeystoneEmailParser\frontend\components\common\Toast.jsx --------------------
+
+// frontend/components/common/Toast.jsx
+/**
+ * Toast component displays a single notification message.
+ * @param {Object} props - Properties passed to the component.
+ * @param {string} props.message - The message to display.
+ * @param {string} props.type - Type of the toast (e.g., success, error).
+ */
+const Toast = ({ message, type }) => {
+  const bgColor = type === 'error' ? 'bg-red-500' : 'bg-green-500';
+  return (
+    <div className={`fixed bottom-4 right-4 p-4 rounded shadow text-white ${bgColor}`}>
+      {message}
+    </div>
+  );
+};
+export default Toast;
+
+
+
+
+# -------------------- C:\Users\jorda\OneDrive\Desktop\Quickbase Dev Work\KeystoneEmailParser\frontend\components\common\ToastContainer.jsx --------------------
+
+// frontend/components/common/ToastContainer.jsx
+/**
+ * ToastContainer displays a list of toast notifications.
+ */
+const ToastContainer = () => {
+  const toasts = useSelector((state) => state.parsing.toasts);
+  return (
+    <div>
+      {toasts.map((toast) => (
+        <Toast key={toast.id} message={toast.message} type={toast.type} />
+      ))}
+    </div>
+  );
+};
+export default ToastContainer;
+
+
+
+
+# -------------------- C:\Users\jorda\OneDrive\Desktop\Quickbase Dev Work\KeystoneEmailParser\frontend\components\ParsingOverlay\styles.css --------------------
+
+
+
+
+
+# -------------------- C:\Users\jorda\OneDrive\Desktop\Quickbase Dev Work\KeystoneEmailParser\frontend\components\ParsingOverlay\StatusIndicator.jsx --------------------
+
+
+
+
+
+# -------------------- C:\Users\jorda\OneDrive\Desktop\Quickbase Dev Work\KeystoneEmailParser\frontend\components\ParsingOverlay\ProgressBar.jsx --------------------
+
+// frontend/components/ParsingOverlay/ProgressBar.jsx
+/**
+ * ProgressBar component displays the current parsing stage and progress percentage.
+ */
+const ProgressBar = () => {
+  const parsingProgress = useSelector((state) => state.parsing.parsingProgress);
+  if (!parsingProgress) return null;
+  const { stage, percentage } = parsingProgress;
+  return (
+    <div className="mt-4">
+      <h2 className="text-gray-700 mb-2">{stage}</h2>
+      <div className="w-full bg-gray-200 rounded-full h-4">
+        <div
+          className="bg-blue-500 h-4 rounded-full"
+          style={{ width: `${percentage}%` }}
+        ></div>
+      </div>
+      <p className="text-gray-600 mt-1">{percentage}% completed</p>
+    </div>
+  );
+};
+export default ProgressBar;
+
+
+
+
+# -------------------- C:\Users\jorda\OneDrive\Desktop\Quickbase Dev Work\KeystoneEmailParser\frontend\components\ParsingOverlay\index.jsx --------------------
+
+// frontend/components/ResultViewer/index.jsx
+/**
+ * ResultViewer component displays the parsed results in different formats.
+ */
+const ResultViewer = () => {
+  const parsingResult = useSelector((state) => state.parsing.parsingResult);
+  const [view, setView] = useState('human'); // 'human' or 'json'
+  if (!parsingResult) return null;
+  return (
+    <div className="mt-6 bg-white p-6 rounded shadow-md">
+      <div className="flex justify-between items-center mb-4">
+        <h2 className="text-xl font-bold">Parsed Results</h2>
+        <div>
+          <button
+            onClick={() => setView('human')}
+            className={`mr-2 px-3 py-1 rounded ${view === 'human' ? 'bg-blue-500 text-white' : 'bg-gray-200'}`}
+          >
+            Human Readable
+          </button>
+          <button
+            onClick={() => setView('json')}
+            className={`px-3 py-1 rounded ${view === 'json' ? 'bg-blue-500 text-white' : 'bg-gray-200'}`}
+          >
+            JSON
+          </button>
+        </div>
+      </div>
+      {view === 'human' ? <HumanReadable data={parsingResult} /> : <JsonView data={parsingResult} />}
+      <DownloadButton data={parsingResult} />
+    </div>
+  );
+};
+// frontend/components/ParsingOverlay/index.jsx
+export { default as ParserForm } from './ParserForm';
+export { default as ProgressBar } from './ProgressBar';
+export { default as StatusIndicator } from './StatusIndicator';
+export default ResultViewer;
+
+
+
+
+# -------------------- C:\Users\jorda\OneDrive\Desktop\Quickbase Dev Work\KeystoneEmailParser\frontend\components\ParsingOverlay\ParserForm.jsx --------------------
+
+// frontend/components/ParsingOverlay/ParserForm.jsx
+/**
+ * ParserForm component allows users to submit email content or upload a document image.
+ */
+const ParserForm = () => {
+  const [emailContent, setEmailContent] = useState('');
+  const [documentImage, setDocumentImage] = useState(null);
+  const [parserOption, setParserOption] = useState('');
+  const dispatch = useDispatch();
+  useEffect(() => {
+    setupSocketListeners(socket, dispatch);
+    // Clean up on unmount
+    return () => {
+      socket.off('parsing_started');
+      socket.off('parsing_progress');
+      socket.off('parsing_completed');
+      socket.off('parsing_error');
+    };
+  }, [dispatch]);
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    const inputs = { parser_option: parserOption, email_content: emailContent, document_image: documentImage };
+    const validation = validateForm(inputs);
+    if (!validation.isValid) {
+      dispatch({
+        type: 'SET_ERROR',
+        payload: validation.message,
+      });
+      return;
+    }
+    dispatch(startParsing({ parser_option: parserOption, email_content: emailContent, document_image: documentImage, socket_id: socket.id }));
+  };
+  return (
+    <form onSubmit={handleSubmit} className="bg-white p-6 rounded shadow-md">
+      <div className="mb-4">
+        <label htmlFor="email_content" className="block text-gray-700">
+          Email Content
+        </label>
+        <textarea
+          id="email_content"
+          value={emailContent}
+          onChange={(e) => setEmailContent(e.target.value)}
+          className="w-full mt-2 p-2 border rounded"
+          rows="4"
+          placeholder="Enter email content here..."
+        ></textarea>
+      </div>
+      <div className="mb-4">
+        <label htmlFor="document_image" className="block text-gray-700">
+          Document Image
+        </label>
+        <input
+          type="file"
+          id="document_image"
+          accept="image/*"
+          onChange={(e) => setDocumentImage(e.target.files[0])}
+          className="w-full mt-2"
+        />
+      </div>
+      <div className="mb-4">
+        <label htmlFor="parser_option" className="block text-gray-700">
+          Parser Option
+        </label>
+        <select
+          id="parser_option"
+          value={parserOption}
+          onChange={(e) => setParserOption(e.target.value)}
+          className="w-full mt-2 p-2 border rounded"
+          required
+        >
+          <option value="">Select a parser option</option>
+          <option value="option1">Option 1</option>
+          <option value="option2">Option 2</option>
+          {/* Add more options as needed */}
+        </select>
+      </div>
+      <button type="submit" className="bg-blue-500 text-white px-4 py-2 rounded">
+        Start Parsing
+      </button>
+    </form>
+  );
+};
+export default ParserForm;
+
+
+
+
+# -------------------- C:\Users\jorda\OneDrive\Desktop\Quickbase Dev Work\KeystoneEmailParser\frontend\components\ResultViewer\styles.css --------------------
+
+
+
+
+
+# -------------------- C:\Users\jorda\OneDrive\Desktop\Quickbase Dev Work\KeystoneEmailParser\frontend\components\ResultViewer\JsonView.jsx --------------------
+
+// frontend/components/ResultViewer/JsonView.jsx
+/**
+ * JsonView component displays the parsed data as formatted JSON.
+ * @param {Object} props - Component properties.
+ * @param {Object} props.data - The parsed data to display.
+ */
+const JsonView = ({ data }) => (
+  <pre className="bg-gray-100 p-4 rounded overflow-auto">
+    {JSON.stringify(data, null, 2)}
+  </pre>
+);
+export default JsonView;
+
+
+
+
+# -------------------- C:\Users\jorda\OneDrive\Desktop\Quickbase Dev Work\KeystoneEmailParser\frontend\components\ResultViewer\HumanReadable.jsx --------------------
+
+// frontend/components/ResultViewer/HumanReadable.jsx
+/**
+ * HumanReadable component displays the parsed data in a readable format.
+ * @param {Object} props - Component properties.
+ * @param {Object} props.data - The parsed data to display.
+ */
+const HumanReadable = ({ data }) => {
+  // Example implementation; adjust based on actual data structure
+  return (
+    <div>
+      {Object.entries(data).map(([section, fields]) => (
+        <div key={section} className="mb-4">
+          <h3 className="text-lg font-semibold">{section}</h3>
+          <ul className="list-disc list-inside">
+            {Object.entries(fields).map(([key, value]) => (
+              <li key={key}>
+                <strong>{key}:</strong> {Array.isArray(value) ? value.join(', ') : value}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
+    </div>
+  );
+};
+export default HumanReadable;
+
+
+
+
+# -------------------- C:\Users\jorda\OneDrive\Desktop\Quickbase Dev Work\KeystoneEmailParser\frontend\components\ResultViewer\DownloadButton.jsx --------------------
+
+// frontend/components/ResultViewer/DownloadButton.jsx
+/**
+ * DownloadButton component enables downloading the parsed data as a JSON file.
+ * @param {Object} props - Component properties.
+ * @param {Object} props.data - The parsed data to download.
+ */
+const DownloadButton = ({ data }) => {
+  const handleDownload = () => {
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    saveAs(blob, 'parsed_result.json');
+  };
+  return (
+    <button onClick={handleDownload} className="mt-4 bg-green-500 text-white px-4 py-2 rounded">
+      Download JSON
+    </button>
+  );
+};
+export default DownloadButton;
+
+
+
+
+# -------------------- C:\Users\jorda\OneDrive\Desktop\Quickbase Dev Work\KeystoneEmailParser\frontend\components\ResultViewer\OriginalView.jsx --------------------
+
+// frontend/components/ResultViewer/OriginalView.jsx
+/**
+ * OriginalView component displays the raw parsed data.
+ * @param {Object} props - Component properties.
+ * @param {Object} props.data - The parsed data to display.
+ */
+const OriginalView = ({ data }) => (
+  <pre className="bg-gray-100 p-4 rounded overflow-auto">
+    {JSON.stringify(data, null, 2)}
+  </pre>
+);
+export default OriginalView;
+
+
+
+
+# -------------------- C:\Users\jorda\OneDrive\Desktop\Quickbase Dev Work\KeystoneEmailParser\frontend\components\ResultViewer\index.jsx --------------------
+
+// frontend/components/ResultViewer/index.jsx
+/**
+ * ResultViewer component displays the parsed results in different formats.
+ */
+const ResultViewer = () => {
+  const parsingResult = useSelector((state) => state.parsing.parsingResult);
+  const [view, setView] = useState('human'); // 'human', 'json', 'original'
+  if (!parsingResult) return null;
+  return (
+    <div className="mt-6 bg-white p-6 rounded shadow-md">
+      <div className="flex justify-between items-center mb-4">
+        <h2 className="text-xl font-bold">Parsed Results</h2>
+        <div>
+          <button
+            onClick={() => setView('human')}
+            className={`mr-2 px-3 py-1 rounded ${view === 'human' ? 'bg-blue-500 text-white' : 'bg-gray-200'}`}
+          >
+            Human Readable
+          </button>
+          <button
+            onClick={() => setView('json')}
+            className={`mr-2 px-3 py-1 rounded ${view === 'json' ? 'bg-blue-500 text-white' : 'bg-gray-200'}`}
+          >
+            JSON
+          </button>
+          <button
+            onClick={() => setView('original')}
+            className={`px-3 py-1 rounded ${view === 'original' ? 'bg-blue-500 text-white' : 'bg-gray-200'}`}
+          >
+            Original
+          </button>
+        </div>
+      </div>
+      {view === 'human' && <HumanReadable data={parsingResult} />}
+      {view === 'json' && <JsonView data={parsingResult} />}
+      {view === 'original' && <OriginalView data={parsingResult} />}
+      <DownloadButton data={parsingResult} />
+    </div>
+  );
+};
+export default ResultViewer;
+
+
+
+
+# -------------------- C:\Users\jorda\OneDrive\Desktop\Quickbase Dev Work\KeystoneEmailParser\frontend\reducers\index.js --------------------
+
+// frontend/reducers/index.js
+/**
+ * Root reducer combining all individual reducers.
+ */
+const rootReducer = combineReducers({
+  parsing: parsingReducer,
+});
+/**
+ * Redux store configured with thunk middleware.
+ */
+const store = createStore(rootReducer, applyMiddleware(thunk));
+export default store;
+
+
+
+
+# -------------------- C:\Users\jorda\OneDrive\Desktop\Quickbase Dev Work\KeystoneEmailParser\frontend\reducers\parsingReducer.js --------------------
+
+// frontend/reducers/parsingReducer.js
+const initialState = {
+    parsingProgress: null, // { stage: string, percentage: number }
+    parsingResult: null, // Parsed data
+    error: null, // Error messages
+    toasts: [], // Array of toast notifications
+  };
+  /**
+   * Parsing reducer handles actions related to parsing progress and results.
+   * @param {Object} state - Current state.
+   * @param {Object} action - Dispatched action.
+   * @returns {Object} - New state.
+   */
+  const parsingReducer = (state = initialState, action) => {
+    switch (action.type) {
+      case 'START_PARSING':
+        return {
+          ...state,
+          parsingProgress: { stage: 'Starting', percentage: 0 },
+          parsingResult: null,
+          error: null,
+        };
+      case 'UPDATE_PROGRESS':
+        return {
+          ...state,
+          parsingProgress: action.payload,
+        };
+      case 'COMPLETE_PARSING':
+        return {
+          ...state,
+          parsingProgress: null,
+          parsingResult: action.payload,
+        };
+      case 'SET_ERROR':
+        return {
+          ...state,
+          parsingProgress: null,
+          error: action.payload,
+        };
+      case 'ADD_TOAST':
+        return {
+          ...state,
+          toasts: [...state.toasts, action.payload],
+        };
+      case 'REMOVE_TOAST':
+        return {
+          ...state,
+          toasts: state.toasts.filter((toast) => toast.id !== action.payload),
+        };
+      default:
+        return state;
+    }
+  };
+  export default parsingReducer;
+
+
+
+
+# -------------------- C:\Users\jorda\OneDrive\Desktop\Quickbase Dev Work\KeystoneEmailParser\frontend\static\css\styles.css --------------------
+
+/* frontend/static/css/styles.css */
+/* Basic styles for the application */
+body {
+    font-family: Arial, sans-serif;
+    background-color: #f9fafb;
+  }
+  .container {
+    max-width: 800px;
+  }
+  button {
+    cursor: pointer;
+  }
+
+
+
+
+# -------------------- C:\Users\jorda\OneDrive\Desktop\Quickbase Dev Work\KeystoneEmailParser\frontend\core\validation.js --------------------
+
+// frontend/core/validation.js
+/**
+ * Validates the parser form inputs.
+ * @param {Object} inputs - The form inputs.
+ * @returns {Object} - Validation result with isValid flag and message.
+ */
+export const validateForm = (inputs) => {
+    const { parser_option, email_content, document_image } = inputs;
+    if (!parser_option) {
+      return { isValid: false, message: 'Please select a parser option.' };
+    }
+    if (!email_content && !document_image) {
+      return { isValid: false, message: 'Please provide email content or a document image.' };
+    }
+    return { isValid: true, message: '' };
+  };
+
+
+
+
+# -------------------- C:\Users\jorda\OneDrive\Desktop\Quickbase Dev Work\KeystoneEmailParser\frontend\core\socketListeners.js --------------------
+
+// frontend/core/socketListeners.js
+/**
+ * Sets up socket listeners for parsing events.
+ * @param {Socket} socket - The Socket.IO client instance.
+ * @param {Function} dispatch - Redux dispatch function.
+ */
+export const setupSocketListeners = (socket, dispatch) => {
+  socket.on('parsing_started', (data) => {
+    const toastId = Date.now();
+    dispatch(addToast({ id: toastId, message: 'Parsing started', type: 'success' }));
+    // Remove toast after 3 seconds
+    setTimeout(() => dispatch(removeToast(toastId)), 3000);
+  });
+  socket.on('parsing_progress', (data) => {
+    dispatch(updateProgress(data));
+  });
+  socket.on('parsing_completed', (data) => {
+    dispatch(completeParsing(data.result));
+    const toastId = Date.now();
+    dispatch(addToast({ id: toastId, message: 'Parsing completed', type: 'success' }));
+    setTimeout(() => dispatch(removeToast(toastId)), 3000);
+  });
+  socket.on('parsing_error', (data) => {
+    dispatch(setError(data.error));
+    const toastId = Date.now();
+    dispatch(addToast({ id: toastId, message: `Error: ${data.error}`, type: 'error' }));
+    setTimeout(() => dispatch(removeToast(toastId)), 3000);
+  });
+};
+
+
+
+
+# -------------------- C:\Users\jorda\OneDrive\Desktop\Quickbase Dev Work\KeystoneEmailParser\frontend\actions\api.js --------------------
+
+// frontend/actions/api.js
+/**
+ * Initiates the parsing of an email by sending data to the backend.
+ * @param {Object} data - The data to send for parsing.
+ * @returns {Promise<Object>} - The response from the backend.
+ */
+export const parseEmail = async (data) => {
+  const formData = new FormData();
+  if (data.email_content) formData.append('email_content', data.email_content);
+  if (data.document_image) formData.append('document_image', data.document_image);
+  formData.append('parser_option', data.parser_option);
+  formData.append('socket_id', data.socket_id);
+  const response = await axios.post('/api/parse_email', formData, {
+    headers: {
+      'Content-Type': 'multipart/form-data',
+    },
+  });
+  return response.data;
+};
+/**
+ * Checks the health of the backend API.
+ * @returns {Promise<Object>} - The health status.
+ */
+export const checkHealth = async () => {
+  const response = await axios.get('/api/health');
+  return response.data;
+};
+
+
+
+
+# -------------------- C:\Users\jorda\OneDrive\Desktop\Quickbase Dev Work\KeystoneEmailParser\frontend\actions\parsingActions.js --------------------
+
+// frontend/actions/parsingActions.js
+/**
+ * Action to start the parsing process.
+ * @param {Object} data - Data required to start parsing.
+ */
+export const startParsing = (data) => async (dispatch) => {
+  dispatch({ type: 'START_PARSING' });
+  try {
+    await parseEmailAPI(data);
+    // Parsing is handled via WebSocket events
+  } catch (error) {
+    dispatch({ type: 'SET_ERROR', payload: error.response?.data?.error_message || 'Parsing failed.' });
+  }
+};
+/**
+ * Action to update parsing progress.
+ * @param {Object} progress - Progress data.
+ */
+export const updateProgress = (progress) => ({
+  type: 'UPDATE_PROGRESS',
+  payload: progress,
+});
+/**
+ * Action to complete parsing with results.
+ * @param {Object} result - Parsed data.
+ */
+export const completeParsing = (result) => ({
+  type: 'COMPLETE_PARSING',
+  payload: result,
+});
+/**
+ * Action to set an error message.
+ * @param {string} error - Error message.
+ */
+export const setError = (error) => ({
+  type: 'SET_ERROR',
+  payload: error,
+});
+/**
+ * Action to add a toast notification.
+ * @param {Object} toast - Toast data.
+ */
+export const addToast = (toast) => ({
+  type: 'ADD_TOAST',
+  payload: toast,
+});
+/**
+ * Action to remove a toast notification.
+ * @param {string} id - Toast ID to remove.
+ */
+export const removeToast = (id) => ({
+  type: 'REMOVE_TOAST',
+  payload: id,
+});
+
+
+
+
+# -------------------- C:\Users\jorda\OneDrive\Desktop\Quickbase Dev Work\KeystoneEmailParser\frontend\utils\helpers.js --------------------
+
+// frontend/utils/helpers.js
+/**
+ * Generates a unique identifier.
+ * @returns {string} - A UUID.
+ */
+export const generateId = () => uuidv4();
+/**
+ * Formats data into JSON or human-readable string.
+ * @param {Object} data - The data to format.
+ * @param {string} format - 'json' or 'human'.
+ * @returns {string} - Formatted string.
+ */
+export const formatData = (data, format) => {
+  if (format === 'json') {
+    return JSON.stringify(data, null, 2);
+  }
+  // Implement human-readable formatting as needed
+  return JSON.stringify(data, null, 2); // Placeholder
+};
+
+
+
+
+# -------------------- C:\Users\jorda\OneDrive\Desktop\Quickbase Dev Work\KeystoneEmailParser\frontend\utils\socket.js --------------------
+
+// frontend/utils/socket.js
+// Initialize the Socket.IO client
+const socket = io('/', { // Adjust the URL if needed
+  path: '/socket.io', // Ensure the path matches the backend
+  transports: ['websocket', 'polling'], // Specify transports
+});
+export default socket;
+
+
+
+
+# -------------------- C:\Users\jorda\OneDrive\Desktop\Quickbase Dev Work\KeystoneEmailParser\src\parsers\enhanced_parser.py --------------------
+
+# src/parsers/enhanced_parser.py
+    ThreadPoolExecutor,
+    TimeoutError as ConcurrentTimeoutError,
+)
+    validate_internal,
+    validate_schema_internal,
+)
+    perform_model_based_parsing,
+    initialize_model_parser,
+)
+ADJUSTER_INFORMATION: str = "Adjuster Information"
+REQUESTING_PARTY: str = "Requesting Party"
+INSURED_INFORMATION: str = "Insured Information"
+ASSIGNMENT_INFORMATION: str = "Assignment Information"
+class EnhancedParser(BaseParser):
+    REQUIRED_ENV_VARS = ["HF_TOKEN", "HF_HOME"]
+    def __init__(
+        self,
+        config: Optional[Dict[str, Any]] = None,
+        socketio: Optional[Any] = None,
+        sid: Optional[str] = None,
+        logger: Optional[logging.Logger] = None,
+    ):
+        super().__init__()
+        self.lock = threading.Lock()
+        self._init_core_attributes(config, socketio, sid, logger)
+        self.device: Optional[str] = None
+        self.donut_processor = None
+        self.donut_model = None
+        self.llama_model = None
+        self.loop: Optional[asyncio.AbstractEventLoop] = None
+        self.executor: Optional[ThreadPoolExecutor] = None
+        self.data_merger: DataMerger = DataMerger(self.logger)
+        self.timeouts = self._set_timeouts()
+        self.input_type = None
+        self._initialize_event_loop()
+        self._is_initialized = False
+    def _init_core_attributes(
+        self,
+        config: Optional[Dict[str, Any]],
+        socketio: Optional[Any],
+        sid: Optional[str],
+        logger: Optional[logging.Logger],
+    ):
+        Config.initialize()
+        self.logger: logging.Logger = logger or self._setup_logging()
+        self.socketio = socketio
+        self.sid = sid
+    def _initialize_event_loop(self) -> None:
+        """Initialize the asyncio event loop in a thread-safe manner."""
+        try:
+            if self.loop is None or self.loop.is_closed():
+                self.loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(self.loop)
+            self.logger.debug("Event loop initialized successfully")
+        except Exception as e:
+            self.logger.error("Failed to initialize asyncio loop", exc_info=True)
+            raise InitializationError(f"Asyncio loop initialization failed: {e}") from e
+        async def parse_async(
+            self,
+            email_content: Optional[str] = None,
+            document_image: Optional[Union[str, Image.Image]] = None,
+        ) -> Dict[str, Any]:
+            if self.loop is None:
+                self.logger.error("Asyncio event loop is not initialized.")
+                return {}
+            return await self.loop.run_in_executor(
+                self.executor, self.parse, email_content, document_image
+            )
+    @property
+    def is_initialized(self) -> bool:
+        """Check if the parser is fully initialized."""
+        return self._is_initialized
+    def initialize(self, input_type: str = "text") -> None:
+        """
+        Initialize the parser with the specified input type.
+        """
+        try:
+            self.input_type = input_type
+            if not self._is_initialized:
+                with self.lock:
+                    self._initialize_executor()
+                    self._initialize_models(input_type)
+                    if self.socketio and self.sid:
+                        self.progress_emitter = ParsingProgressEmitter(self.socketio, self.sid)
+                    self._is_initialized = True
+                    self.logger.info(
+                        "Parser initialized successfully for input type: %s", input_type
+                    )
+        except Exception as e:
+            self.logger.error("Failed to initialize parser: %s", e, exc_info=True)
+            raise InitializationError(f"Parser initialization failed: {e}") from e
+    def parse_email(
+        self,
+        email_content: Optional[str] = None,
+        document_image: Optional[Image.Image] = None,
+    ) -> Dict[str, Any]:
+        """
+        Parse email content with real-time progress updates.
+        """
+        parsed_data = {}
+        try:
+            if self.progress_emitter and email_content:
+                # Count approximate number of lines for progress tracking
+                total_lines = len(email_content.splitlines())
+                self.progress_emitter.emit_parsing_started(total_lines)
+            # Parse the email content or image
+            parsed_data = self.parse(email_content, document_image)
+            # Validate the parsed data
+            is_valid, errors = validate_json(parsed_data)
+            if not is_valid:
+                self.logger.warning("Validation failed. Proceeding with partial results.")
+                parsed_data["validation_issues"] = errors
+                if self.progress_emitter:
+                    self.progress_emitter.emit_parsing_error(
+                        "Validation issues found",
+                        {"validation_issues": errors}
+                    )
+            # Emit completion event
+            if self.progress_emitter:
+                self.progress_emitter.emit_parsing_complete({
+                    "total_sections": len(parsed_data),
+                    "validation_status": "valid" if is_valid else "invalid",
+                    "timestamp": datetime.now().isoformat()
+                })
+        except Exception as e:
+            self.logger.error("Error during email parsing: %s", e)
+            parsed_data["parsing_error"] = str(e)
+            if self.progress_emitter:
+                self.progress_emitter.emit_parsing_error(str(e))
+        return parsed_data
+    def parse(
+        self,
+        email_content: Optional[str] = None,
+        document_image: Optional[Union[str, Image.Image]] = None,
+    ) -> Dict[str, Any]:
+        self.logger.info("Starting parsing process.")
+        parsed_data: Dict[str, Any] = {}
+        input_type = self._detect_input_type(email_content, document_image)
+        try:
+            with self.lock:
+                self._initialize_executor()
+                self._initialize_models(input_type)
+            stages = self._get_parsing_stages(
+                email_content, document_image, parsed_data
+            )
+            for stage in stages:
+                parsed_data = self._process_parsing_stage(stage, parsed_data)
+            return parsed_data
+        except Exception as e:
+            self.logger.error("Error during parsing: %s", e, exc_info=True)
+            return self._handle_parsing_error(e, parsed_data)
+        finally:
+            self.cleanup_resources()
+    def _detect_input_type(
+        self,
+        email_content: Optional[str],
+        document_image: Optional[Union[str, Image.Image]],
+    ) -> str:
+        if email_content and document_image:
+            return "both"
+        elif email_content:
+            return "text"
+        elif document_image:
+            return "image"
+        else:
+            # Log and handle the "none" input type case
+            self.logger.error("Both email_content and document_image are missing.")
+            return "none"
+    def _initialize_executor(self):
+        if not self.executor:
+            self.executor = ThreadPoolExecutor(
+                max_workers=self._determine_thread_count()
+            )
+            self.logger.debug("ThreadPoolExecutor initialized.")
+    def _initialize_models(self, input_type: str) -> None:
+        try:
+            if input_type in ["image", "both"] and not self.donut_model:
+                self.donut_processor, self.donut_model = self._initialize_with_retry(
+                    initialize_donut, self.logger, Config.get_model_config("donut")
+                )
+            if input_type in ["text", "both"] and not self.llama_model:
+                self.llama_model = self._initialize_with_retry(
+                    initialize_model_parser,
+                    self.logger,
+                    Config.get_model_config("llama"),
+                    prompt_templates=self._render_prompts(),
+                )
+            self.device = Config.get_device()
+        except InitializationError:
+            raise
+        except Exception as e:
+            self.logger.error("Failed to initialize models: %s", e, exc_info=True)
+            raise InitializationError(f"Model initialization failed: {e}") from e
+    def _check_environment_variables(self) -> None:
+        missing_vars = [var for var in self.REQUIRED_ENV_VARS if not os.getenv(var)]
+        if missing_vars:
+            self.logger.error(
+                "Missing required environment variables: %s",
+                ", ".join(missing_vars),
+            )
+            raise EnvironmentError(
+                f"Missing required environment variables: {', '.join(missing_vars)}"
+            )
+    def _setup_logging(self) -> logging.Logger:
+        logger = logging.getLogger("EnhancedParser")
+        if not logger.handlers:
+            handler = logging.StreamHandler()
+            formatter = logging.Formatter(
+                "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+            )
+            handler.setFormatter(formatter)
+            logger.addHandler(handler)
+            logger.setLevel(logging.DEBUG)
+        return logger
+    def _initialize_with_retry(self, init_func: Callable, *args, **kwargs) -> Any:
+        max_retries = kwargs.pop("max_retries", 3)
+        for attempt in range(max_retries):
+            try:
+                component = init_func(*args, **kwargs)
+                self.logger.debug(
+                    "Successfully initialized %s on attempt %d.",
+                    init_func.__name__,
+                    attempt + 1,
+                )
+                return component
+            except (ValueError, OSError, TypeError) as e:
+                # Log each attempt failure
+                self.logger.warning(
+                    "Initialization attempt %d for %s failed: %s. Retrying...",
+                    attempt + 1,
+                    init_func.__name__,
+                    e,
+                )
+                if attempt == max_retries - 1:
+                    self.logger.error(
+                        "Failed to initialize %s after %d attempts: %s",
+                        init_func.__name__,
+                        max_retries,
+                        e,
+                        exc_info=True,
+                    )
+                    raise InitializationError(
+                        f"Initialization failed for {init_func.__name__}: {e}"
+                    ) from e
+                torch.cuda.empty_cache()
+    def _determine_thread_count(self) -> int:
+        cpu_count = psutil.cpu_count(logical=True)
+        available_memory_gb = psutil.virtual_memory().available / (1024**3)
+        thread_count = min(
+            16,
+            cpu_count * 2,
+            int(available_memory_gb * 2),
+        )
+        self.logger.debug("Determined thread count: %d", thread_count)
+        return max(1, thread_count)
+    def _set_timeouts(self) -> Dict[str, int]:
+        """
+        Set timeouts for various processing stages from configuration.
+        Returns a dictionary of stage timeouts with fallback defaults.
+        """
+        try:
+            # Get stages configuration
+            stages_config = Config.get_full_config().get("stages", {})
+            # Set default timeouts
+            timeouts = {
+                "donut_parsing": 60,
+                "llama_text_extraction": 60,
+                "llama_validation": 45,
+                "llama_summarization": 30,
+                "post_processing": 30,
+                "json_validation": 30,
+            }
+            # Dynamically adjust timeouts based on model size or performance
+            model_size = self.config.get("model_size", "default")
+            if model_size == "large":
+                timeouts = {key: value * 2 for key, value in timeouts.items()}
+            elif model_size == "small":
+                timeouts = {key: value // 2 for key, value in timeouts.items()}
+            self.logger.debug("Initialized timeouts: %s", timeouts)
+            return timeouts
+        except Exception as e:
+            self.logger.error("Error setting timeouts, using defaults: %s", str(e))
+            return {
+                "donut_parsing": 60,
+                "llama_text_extraction": 60,
+                "llama_validation": 45,
+                "llama_summarization": 30,
+                "post_processing": 30,
+                "json_validation": 30,
+            }
+    def _render_prompts(self) -> Dict[str, str]:
+        prompts = {}
+        prompt_config = (
+            self.config.get("models", {}).get("llama", {}).get("prompt_templates", {})
+        )
+        for task, template in prompt_config.items():
+            if template:
+                data_points = Config.get_data_points()
+                template_obj = Template(template)
+                prompts[task] = template_obj.render(data_points=data_points)
+            else:
+                prompts[task] = ""
+        return prompts
+    def _get_parsing_stages(
+        self,
+        email_content: Optional[str],
+        document_image: Optional[Union[str, Image.Image]],
+        parsed_data: Dict[str, Any],
+    ) -> List[Tuple[str, Callable, Dict[str, Any]]]:
+        enabled_stages = Config.get_enabled_stages()
+        stages = []
+        if "Email Parsing" in enabled_stages and email_content:
+            stages.append(
+                (
+                    "Email Parsing",
+                    self._stage_email_parsing,
+                    {"email_content": email_content},
+                )
+            )
+        if "Donut Parsing" in enabled_stages and document_image:
+            stages.append(
+                (
+                    "Donut Parsing",
+                    self._stage_donut_parsing,
+                    {"document_image": document_image},
+                )
+            )
+        if "Text Extraction" in enabled_stages and email_content:
+            stages.append(
+                (
+                    "Text Extraction",
+                    self._stage_text_extraction,
+                    {"email_content": email_content},
+                )
+            )
+        if "Validation" in enabled_stages and email_content:
+            stages.append(
+                (
+                    "Validation",
+                    self._stage_validation,
+                    {"email_content": email_content, "parsed_data": parsed_data},
+                )
+            )
+        if "Summarization" in enabled_stages and email_content:
+            stages.append(
+                (
+                    "Summarization",
+                    self._stage_summarization,
+                    {"email_content": email_content, "parsed_data": parsed_data},
+                )
+            )
+        if "Post Processing" in enabled_stages and parsed_data:
+            stages.append(
+                (
+                    "Post Processing",
+                    self._stage_post_processing,
+                    {"parsed_data": parsed_data},
+                )
+            )
+        if "JSON Validation" in enabled_stages and parsed_data:
+            stages.append(
+                (
+                    "JSON Validation",
+                    self._stage_json_validation,
+                    {"parsed_data": parsed_data},
+                )
+            )
+        return stages
+    def _process_parsing_stage(
+        self,
+        stage: Tuple[str, Callable, Dict[str, Any]],
+        parsed_data: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        stage_name, stage_method, kwargs = stage
+        self.logger.info("Starting stage: %s", stage_name)
+        try:
+            future = self.executor.submit(stage_method, **kwargs)
+            stage_result = future.result(timeout=self._get_stage_timeout(stage_name))
+            if isinstance(stage_result, dict) and stage_result:
+                parsed_data = self.data_merger.merge_parsed_data(
+                    parsed_data, stage_result
+                )
+            self.logger.info("Completed stage: %s", stage_name)
+            return parsed_data
+        except Exception as e:
+            # Log the error but continue with the next stage
+            self.logger.error(
+                "Error during stage '%s'. Continuing with partial results: %s", stage_name, e
+            )
+            return parsed_data  # Return what we have so far
+    def _get_stage_timeout(self, stage_name: str) -> int:
+        stage_key = stage_name.lower().replace(" ", "_")
+        return self.timeouts.get(stage_key, 60)
+    def _handle_parsing_error(
+        self, error: Exception, parsed_data: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        self.logger.error("Parsing process failed: %s", error, exc_info=True)
+        parsed_data["validation_issues"] = parsed_data.get("validation_issues", []) + [
+            str(error)
+        ]
+        return parsed_data
+    def _handle_stage_error(
+        self, stage_name: str, error: Exception, parsed_data: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        if isinstance(error, (ConcurrentTimeoutError, ParsingError, ValidationError)):
+            parsed_data["validation_issues"] = parsed_data.get(
+                "validation_issues", []
+            ) + [str(error)]
+        else:
+            parsed_data["validation_issues"] = parsed_data.get(
+                "validation_issues", []
+            ) + [f"Unexpected error in stage '{stage_name}': {error}"]
+        return parsed_data
+    def _stage_email_parsing(
+        self, email_content: Optional[str] = None
+    ) -> Dict[str, Any]:
+        if not email_content:
+            self.logger.warning("No email content provided for Email Parsing.")

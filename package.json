@@ -4,14 +4,14 @@
   "description": "Email parsing application with React frontend",
   "main": "static/js/main.js",
   "scripts": {
-    "start": "concurrently \"python app.py\" \"webpack serve --mode development\"",
+    "start": "concurrently \"npm run start:backend\" \"npm run start:frontend\"",
     "start:frontend": "webpack serve --mode development",
-    "start:backend": "python app.py",
+    "start:backend": "cross-env FLASK_ENV=development python app.py",
     "build": "webpack --mode development",
     "build:prod": "webpack --mode production",
     "watch": "webpack --watch --mode development",
-    "clean": "del-cli static/dist/*",
-    "lint": "eslint src/**/*.{js,jsx}",
+    "clean": "rimraf static/dist",
+    "lint": "eslint frontend/**/*.{js,jsx}",
     "test": "echo \"No tests specified\" && exit 0"
   },
   "dependencies": {
@@ -22,7 +22,6 @@
     "dompurify": "^3.1.7",
     "file-saver": "^2.0.5",
     "jspdf": "^2.5.1",
-    "length": "^0.0.1",
     "lodash": "^4.17.21",
     "lottie-web": "^5.12.2",
     "lucide-react": "^0.263.1",
@@ -36,11 +35,14 @@
     "recharts": "^2.5.0",
     "redux": "^4.2.1",
     "redux-thunk": "^2.4.2",
-    "socket.io-client": "^4.5.4"
+    "socket.io-client": "^4.5.4",
+    "uuid": "^11.0.2"
   },
   "devDependencies": {
     "@babel/core": "^7.26.0",
     "@babel/plugin-proposal-class-properties": "^7.18.6",
+    "@babel/plugin-proposal-optional-chaining": "^7.21.0",
+    "@babel/plugin-transform-nullish-coalescing-operator": "^7.25.9",
     "@babel/plugin-transform-runtime": "^7.25.9",
     "@babel/preset-env": "^7.26.0",
     "@babel/preset-react": "^7.25.9",
@@ -66,14 +68,13 @@
     "webpack-dev-server": "^4.15.0"
   },
   "browser": {
-    "@": "./static",
-    "@components": "./static/components",
-    "@actions": "./static/js/actions",
-    "@reducers": "./static/js/reducers",
-    "@core": "./static/js/core",
-    "@utils": "./static/js/utils",
-    "@ui": "./static/js/ui",
-    "@css": "./static/css"
+    "@": "./frontend",
+    "@components": "./frontend/components",
+    "@actions": "./frontend/actions",
+    "@reducers": "./frontend/reducers",
+    "@core": "./frontend/core",
+    "@utils": "./frontend/utils",
+    "@css": "./frontend/static/css"
   },
   "engines": {
     "node": ">=14.0.0",
@@ -86,9 +87,9 @@
       "not op_mini all"
     ],
     "development": [
-      "last 1 chrome version",
-      "last 1 firefox version",
-      "last 1 safari version"
+      "last 2 Chrome versions",
+      "last 2 Firefox versions",
+      "last 2 Safari versions"
     ]
   }
 }

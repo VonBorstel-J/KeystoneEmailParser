@@ -7,17 +7,21 @@
           "browsers": [">0.25%", "not ie 11", "not op_mini all"]
         },
         "useBuiltIns": "usage",
-        "corejs": "3.8"
+        "corejs": "3.21"
       }
     ],
     "@babel/preset-react"
   ],
   "plugins": [
     "@babel/plugin-proposal-class-properties",
+    "@babel/plugin-transform-nullish-coalescing-operator", // Updated here
+    "@babel/plugin-proposal-optional-chaining",
     [
       "@babel/plugin-transform-runtime",
       {
-        "regenerator": true
+        "corejs": 3,
+        "regenerator": true,
+        "helpers": true
       }
     ]
   ]

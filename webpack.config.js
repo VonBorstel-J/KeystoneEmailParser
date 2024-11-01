@@ -1,8 +1,9 @@
 // webpack.config.js
-
 const path = require('path');
 const MiniCssExtractPlugin = require('mini-css-extract-plugin');
-const HtmlWebpackPlugin = require('html-webpack-plugin'); // To generate HTML files
+const HtmlWebpackPlugin = require('html-webpack-plugin');
+const { CleanWebpackPlugin } = require('clean-webpack-plugin');
+const webpack = require('webpack');
 
 module.exports = (env, argv) => {
   const isProduction = argv.mode === 'production';
@@ -10,14 +11,14 @@ module.exports = (env, argv) => {
   return {
     mode: isProduction ? 'production' : 'development',
     entry: {
-      main: './static/js/main.js', // Define entry points as an object
+      main: './frontend/index.js',
     },
     output: {
       path: path.resolve(__dirname, 'static/dist'),
-      filename: isProduction ? '[name].[contenthash].js' : '[name].js', // Use [name].js to differentiate chunks
-      chunkFilename: isProduction ? '[name].[contenthash].js' : '[name].js', // Similarly for non-entry chunks
-      publicPath: '/static/dist/',
-      clean: true, // Automatically clean the output directory before emit
+      filename: isProduction ? '[name].[contenthash].js' : '[name].js',
+      chunkFilename: isProduction ? '[name].[contenthash].js' : '[name].js',
+      publicPath: '/',
+      clean: true,
     },
     devtool: isProduction ? 'source-map' : 'inline-source-map',
     devServer: {
@@ -34,89 +35,117 @@ module.exports = (env, argv) => {
       compress: true,
       port: 8080,
       hot: true,
-      historyApiFallback: {
-        // Prevent historyApiFallback from intercepting asset paths
-        rewrites: [
-          { from: /^\/static\/dist\/[a-z0-9]+\.[a-z0-9]+\.[a-z0-9]+\.(js|css)$/, to: (context) => context.parsedUrl.pathname },
-        ],
-      },
+      liveReload: true,
+      historyApiFallback: true,
       proxy: {
-        '/api': 'http://localhost:5000',
+        '/api': {
+          target: 'http://127.0.0.1:5000',
+          changeOrigin: true,
+          secure: false,
+          pathRewrite: {'^/api': '/api'},
+          logLevel: 'debug'
+        },
         '/socket.io': {
-          target: 'http://localhost:5000',
+          target: 'http://127.0.0.1:5000',
           ws: true,
           changeOrigin: true,
+          timeout: 60000,
+          proxyTimeout: 60000,
+          logLevel: 'debug',
         },
       },
     },
     module: {
       rules: [
         {
-          test: /\.(js|jsx)$/, // Handle JS and JSX files
+          test: /\.(js|jsx)$/,
           exclude: /node_modules/,
           use: {
             loader: 'babel-loader',
+            options: {
+              cacheDirectory: true, // Speeds up Babel compilation by caching
+            },
           },
         },
         {
-          test: /\.css$/, // Handle CSS files
+          test: /\.css$/,
           use: [
-            isProduction ? MiniCssExtractPlugin.loader : 'style-loader', // Extract CSS in production
+            isProduction ? MiniCssExtractPlugin.loader : 'style-loader',
             {
               loader: 'css-loader',
               options: {
-                importLoaders: 1, // Number of loaders applied before CSS loader
+                importLoaders: 1,
+                sourceMap: !isProduction,
               },
             },
-            'postcss-loader', // Apply PostCSS transformations
+            'postcss-loader',
           ],
         },
         {
-          test: /\.(png|jpe?g|gif|svg)$/i, // Handle image assets
+          test: /\.(png|jpe?g|gif|svg)$/i,
           type: 'asset/resource',
           generator: {
-            filename: 'images/[hash][ext][query]', // Output images to images/ directory
+            filename: 'images/[hash][ext][query]',
+          },
+        },
+        {
+          test: /\.(woff(2)?|eot|ttf|otf|svg)$/, // Handle fonts and additional SVGs
+          type: 'asset/resource',
+          generator: {
+            filename: 'fonts/[name][ext][query]',
           },
         },
       ],
     },
     resolve: {
-      extensions: ['.js', '.jsx', '.css'], // Resolve these extensions
+      extensions: ['.js', '.jsx', '.css'],
       alias: {
-        '@': path.resolve(__dirname, 'static'),
-        '@components': path.resolve(__dirname, 'static/components'),
-        '@actions': path.resolve(__dirname, 'static/js/actions'),
-        '@reducers': path.resolve(__dirname, 'static/js/reducers'),
-        '@core': path.resolve(__dirname, 'static/js/core'),
-        '@utils': path.resolve(__dirname, 'static/js/utils'),
-        '@css': path.resolve(__dirname, 'static/css'),
+        '@': path.resolve(__dirname, 'frontend'),
+        '@components': path.resolve(__dirname, 'frontend/components'),
+        '@actions': path.resolve(__dirname, 'frontend/actions'),
+        '@reducers': path.resolve(__dirname, 'frontend/reducers'),
+        '@core': path.resolve(__dirname, 'frontend/core'),
+        '@utils': path.resolve(__dirname, 'frontend/utils'),
+        '@css': path.resolve(__dirname, 'frontend/static/css'),
       },
     },
     plugins: [
       new MiniCssExtractPlugin({
-        filename: isProduction ? '[name].[contenthash].css' : '[name].css', // Unique CSS filenames
+        filename: isProduction ? '[name].[contenthash].css' : '[name].css',
       }),
       new HtmlWebpackPlugin({
         template: path.resolve(__dirname, 'templates', 'index.html'),
         filename: 'index.html',
-        inject: 'body', // Inject scripts at the end of the body
+        inject: 'body',
         minify: isProduction
           ? {
               removeComments: true,
               collapseWhitespace: true,
               removeRedundantAttributes: true,
+              useShortDoctype: true,
             }
           : false,
+      }),
+      new CleanWebpackPlugin(), // Ensures clean build folders
+      new webpack.DefinePlugin({
+        'process.env.NODE_ENV': JSON.stringify(isProduction ? 'production' : 'development'),
       }),
     ],
     optimization: {
       splitChunks: {
-        chunks: 'all', // Split vendor and commons
+        chunks: 'all',
+        cacheGroups: {
+          vendor: {
+            test: /[\\/]node_modules[\\/]/,
+            name: 'vendors',
+            chunks: 'all',
+          },
+        },
       },
-      runtimeChunk: 'single', // Create a single runtime bundle
+      runtimeChunk: 'single',
     },
     performance: {
-      hints: isProduction ? 'warning' : false, // Show performance hints only in production
+      hints: isProduction ? 'warning' : false,
     },
   };
 };

@@ -1,0 +1,135 @@
+
+                cleanup_e,
+                exc_info=True,
+            )
+        sys.exit(1)
+    except Exception as e:
+        logger.critical("Failed to start the Flask application: %s", e, exc_info=True)
+        try:
+            ParserRegistry.cleanup_parsers()
+        except Exception as cleanup_e:
+            logger.error(
+                "Error during cleanup after failed startup: %s",
+                cleanup_e,
+                exc_info=True,
+            )
+        sys.exit(1)
+
+
+
+
+# -------------------- C:\Users\jorda\OneDrive\Desktop\Quickbase Dev Work\KeystoneEmailParser\.babelrc --------------------
+
+{
+  "presets": [
+    [
+      "@babel/preset-env",
+      {
+        "targets": {
+          "browsers": [">0.25%", "not ie 11", "not op_mini all"]
+        },
+        "useBuiltIns": "usage",
+        "corejs": "3.8"
+      }
+    ],
+    "@babel/preset-react"
+  ],
+  "plugins": [
+    "@babel/plugin-proposal-class-properties",
+    [
+      "@babel/plugin-transform-runtime",
+      {
+        "regenerator": true
+      }
+    ]
+  ]
+}
+
+
+
+
+# -------------------- C:\Users\jorda\OneDrive\Desktop\Quickbase Dev Work\KeystoneEmailParser\postcss.config.js --------------------
+
+// postcss.config.js
+module.exports = {
+    plugins: {
+      'tailwindcss': {},
+      'autoprefixer': {},
+    }
+  };
+
+
+
+# -------------------- C:\Users\jorda\OneDrive\Desktop\Quickbase Dev Work\KeystoneEmailParser\importSchema.json --------------------
+
+{
+  "RequestingParty": {
+    "InsuranceCompany": "",
+    "Handler": "",
+    "CarrierClaimNumber": ""
+  },
+  "InsuredInformation": {
+    "Name": "",
+    "ContactNumber": "",
+    "LossAddress": "",
+    "PublicAdjuster": "",
+    "OwnershipStatus": ""
+  },
+  "AdjusterInformation": {
+    "AdjusterName": "",
+    "AdjusterPhoneNumber": "",
+    "AdjusterEmail": "",
+    "JobTitle": "",
+    "Address": "",
+    "PolicyNumber": ""
+  },
+  "AssignmentInformation": {
+    "DateOfLoss": "",
+    "CauseOfLoss": "",
+    "FactsOfLoss": "",
+    "LossDescription": "",
+    "ResidenceOccupiedDuringLoss": "",
+    "WasSomeoneHomeAtTimeOfDamage": "",
+    "RepairOrMitigationProgress": "",
+    "Type": "",
+    "InspectionType": ""
+  },
+  "AssignmentType": {
+    "Wind": false,
+    "Structural": false,
+    "Hail": false,
+    "Foundation": false,
+    "Other": {
+      "isChecked": false,
+      "details": ""
+    }
+  },
+  "AdditionalDetails": "",
+  "Attachments": []
+}
+
+
+
+
+# -------------------- C:\Users\jorda\OneDrive\Desktop\Quickbase Dev Work\KeystoneEmailParser\.env --------------------
+
+# .env
+# OpenAI API Key
+OPENAI_API_KEY=your_openai_api_key
+# Local LLM API Endpoint
+LOCAL_LLM_API_ENDPOINT=http://localhost:3000/v1/completions
+# Ai Tings
+HF_TOKEN=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
+HF_HOME=D:\AiHub
+TRANSFORMERS_CACHE=D:\AiHub
+# Model configuration
+MODEL_TIMEOUT=500
+BATCH_SIZE=1
+MODEL_RETRIES=3
+# CUDA settings
+CUDA_VISIBLE_DEVICES=0  # Use first GPU
+PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:6144
+torch.cuda.set_per_process_memory_fraction(0.9)
+torch.backends.cuda.cufft_plan_cache.clear()
+
+

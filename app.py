@@ -1,5 +1,6 @@
 # src/app.py
-
+import eventlet
+eventlet.monkey_patch()
 import os
 import io
 import sys
@@ -13,6 +14,7 @@ from typing import Dict, Any, Optional
 
 import json_log_formatter
 from flask import Flask, render_template, request, jsonify, send_from_directory
+from flask_cors import CORS  # CORS support added
 from flask_socketio import SocketIO
 from dotenv import load_dotenv
 from PIL import Image
@@ -43,12 +45,13 @@ def setup_logging() -> logging.Logger:
 def init_app() -> (Flask, SocketIO):
     load_dotenv()
     app = Flask(__name__, static_folder='static', template_folder='templates')
+    CORS(app)  # Enable CORS
     socketio = SocketIO(
         app,
         cors_allowed_origins="*",
         logger=True,
         engineio_logger=True,
-        async_mode="threading",
+        async_mode="eventlet",
     )
     return app, socketio
 
@@ -188,11 +191,13 @@ def background_parse(
     finally:
         loop.close()
 
+# Frontend route
 @app.route("/", methods=["GET"])
 def index():
     logger.info("Rendering index page.")
     return render_template("index.html")
 
+# Favicon route
 @app.route("/favicon.ico")
 def favicon_route():
     favicon_path = os.path.join(app.root_path, "static", "favicon.ico")
@@ -205,7 +210,8 @@ def favicon_route():
     logger.warning("favicon.ico not found at path: %s", favicon_path)
     return jsonify({"error_message": "favicon.ico not found."}), 404
 
-@app.route("/parse_email", methods=["POST"])
+# API routes - all prefixed with /api
+@app.route("/api/parse_email", methods=["POST"])
 def parse_email_route():
     email_content = request.form.get("email_content", "").strip()
     image_file = request.files.get("document_image")
@@ -272,7 +278,7 @@ def parse_email_route():
     logger.info("Parsing started for Socket ID: %s", sid)
     return jsonify({"message": "Parsing started"}), 202
 
-@app.route("/health", methods=["GET"])
+@app.route("/api/health", methods=["GET"])
 def health_check_route():
     try:
         status = ParserRegistry.health_check()
@@ -282,15 +288,16 @@ def health_check_route():
         logger.error("Health check failed: %s", e, exc_info=True)
         return jsonify({"status": "unhealthy", "error": str(e)}), 500
 
-@socketio.on("connect")
-def handle_connect():
-    sid = request.sid
-    logger.info("Client connected: %s", sid)
+# Error handlers
+@app.errorhandler(404)
+def not_found_error(error):
+    logger.warning("404 error: %s not found. Exception: %s", request.url, error)
+    return jsonify({"error": "Endpoint not found"}), 404
 
-@socketio.on("disconnect")
-def handle_disconnect():
-    sid = request.sid
-    logger.info("Client disconnected: %s", sid)
+@app.errorhandler(500)
+def internal_error(error):
+    logger.error("Internal server error: %s", error, exc_info=True)
+    return jsonify({"error": "Internal server error"}), 500
 
 @app.errorhandler(Exception)
 def handle_exception(e: Exception):
@@ -304,6 +311,37 @@ def page_not_found(e: Exception):
         jsonify({"error_message": "The requested URL was not found on the server."}),
         404,
     )
+
+# SocketIO event handlers
+@socketio.on("connect")
+def handle_connect():
+    sid = request.sid
+    logger.info("Client connected: %s", sid)
+    logger.debug("Connection headers: %s", request.headers)
+    logger.debug("Connection environment: %s", request.environ)
+    
+    # Emit a test message to verify connection
+    try:
+        socketio.emit("connection_test", {"status": "connected", "sid": sid}, room=sid)
+        logger.debug("Sent connection test to client %s", sid)
+    except Exception as e:
+        logger.error("Failed to emit connection test: %s", e, exc_info=True)
+
+@socketio.on("disconnect")
+def handle_disconnect():
+    sid = request.sid
+    logger.info("Client disconnected: %s", sid)
+    logger.debug("Disconnect reason: %s", request.environ.get('disconnection_reason', 'unknown'))
+
+@socketio.on_error()
+def error_handler(e):
+    logger.error("SocketIO error: %s", e, exc_info=True)
+    if request.sid:
+        socketio.emit(
+            "parsing_error",
+            {"error": "An unexpected error occurred during socket communication"},
+            room=request.sid
+        )
 
 def signal_handler(_sig, _frame):
     try:
@@ -341,7 +379,7 @@ if __name__ == "__main__":
         signal.signal(signal.SIGINT, signal_handler)
         signal.signal(signal.SIGTERM, signal_handler)
 
-        socketio.run(app, host=host, port=port, debug=True, use_reloader=False, allow_unsafe_werkzeug=True)
+        socketio.run(app, host=host, port=port, debug=True, use_reloader=False)
     except InitializationError as ie:
         logger.critical(
             "Parser initialization failed during startup: %s", ie, exc_info=True
