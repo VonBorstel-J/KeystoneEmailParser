@@ -45,14 +45,25 @@ def setup_logging() -> logging.Logger:
 def init_app() -> (Flask, SocketIO):
     load_dotenv()
     app = Flask(__name__, static_folder='static', template_folder='templates')
-    CORS(app)  # Enable CORS
+    
+    # Configure CORS properly
+    CORS(app, resources={
+        r"/api/*": {"origins": "*"},
+        r"/socket.io/*": {"origins": "*"}
+    })
+    
     socketio = SocketIO(
         app,
         cors_allowed_origins="*",
         logger=True,
         engineio_logger=True,
         async_mode="eventlet",
+        ping_timeout=60,
+        ping_interval=25,
+        max_http_buffer_size=100 * 1024 * 1024,  # 100MB for large files
+        transport='websocket'
     )
+    
     return app, socketio
 
 def setup_cache_dirs(logger: logging.Logger):
@@ -213,70 +224,37 @@ def favicon_route():
 # API routes - all prefixed with /api
 @app.route("/api/parse_email", methods=["POST"])
 def parse_email_route():
-    email_content = request.form.get("email_content", "").strip()
-    image_file = request.files.get("document_image")
-    parser_option_str = request.form.get("parser_option", "").strip()
-    socket_id = request.form.get("socket_id")
+    try:
+        email_content = request.form.get("email_content", "").strip()
+        image_file = request.files.get("document_image")
+        parser_option_str = request.form.get("parser_option", "").strip()
+        socket_id = request.form.get("socket_id")
 
-    if not email_content and not image_file:
-        logger.warning("No email content or document image provided.")
-        return (
-            jsonify(
+        if not socket_id:
+            logger.warning("No socket ID provided.")
+            return jsonify({"error_message": "Socket ID not provided."}), 400
+
+        # Validate inputs
+        if not email_content and not image_file:
+            logger.warning("No email content or document image provided.")
+            return jsonify(
                 {"error_message": "Please provide email content or document image"}
-            ),
-            400,
+            ), 400
+
+        # Start parsing in background task
+        socketio.start_background_task(
+            background_parse, 
+            socket_id,
+            parser_option_str, 
+            email_content,
+            image_file.read() if image_file else None
         )
 
-    if not parser_option_str:
-        logger.warning("No parser option selected.")
-        return jsonify({"error_message": "Please select a parser option."}), 400
+        return jsonify({"message": "Parsing started", "socket_id": socket_id}), 202
 
-    sid = socket_id
-    if not sid:
-        logger.warning("No socket ID provided.")
-        return jsonify({"error_message": "Socket ID not provided."}), 400
-
-    logger.info("Received Socket ID: %s", sid)
-
-    try:
-        parser_option = ParserOption(parser_option_str)
-    except ValueError:
-        logger.warning("Invalid parser option selected: %s", parser_option_str)
-        return (
-            jsonify({"error_message": f"Invalid parser option: {parser_option_str}"}),
-            400,
-        )
-
-    try:
-        # Adjusted get_parser call without 'input_type'
-        parser_config = ParserRegistry.get_parser(parser_option, socketio=socketio, sid=sid)
-    except InitializationError as ie:
-        logger.error("Parser initialization failed: %s", ie)
-        return jsonify({"error_message": str(ie)}), 500
     except Exception as e:
-        logger.error(
-            "Unexpected error during parser initialization: %s", e, exc_info=True
-        )
-        return jsonify({"error_message": "Parser initialization failed"}), 500
-
-    if parser_config is None:
-        logger.error("Parser could not be initialized.")
-        return jsonify({"error_message": "Parser could not be initialized"}), 500
-
-    document_image = None
-    if image_file:
-        try:
-            document_image = Image.open(io.BytesIO(image_file.read()))
-        except Exception as e:
-            logger.error("Image processing failed: %s", e, exc_info=True)
-            return jsonify({"error_message": "Invalid image format"}), 400
-
-    socketio.start_background_task(
-        background_parse, sid, parser_option_str, email_content, document_image
-    )
-
-    logger.info("Parsing started for Socket ID: %s", sid)
-    return jsonify({"message": "Parsing started"}), 202
+        logger.error(f"Error in parse_email_route: {str(e)}", exc_info=True)
+        return jsonify({"error_message": "Internal server error"}), 500
 
 @app.route("/api/health", methods=["GET"])
 def health_check_route():

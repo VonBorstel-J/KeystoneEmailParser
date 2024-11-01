@@ -1,4 +1,391 @@
 
+        self.data_merger: DataMerger = DataMerger(self.logger)
+        self.timeouts = self._set_timeouts()
+        self.input_type = None
+        self._initialize_event_loop()
+        self._is_initialized = False
+    def _init_core_attributes(
+        self,
+        config: Optional[Dict[str, Any]],
+        socketio: Optional[Any],
+        sid: Optional[str],
+        logger: Optional[logging.Logger],
+    ):
+        Config.initialize()
+        self.logger: logging.Logger = logger or self._setup_logging()
+        self.socketio = socketio
+        self.sid = sid
+    def _initialize_event_loop(self) -> None:
+        """Initialize the asyncio event loop in a thread-safe manner."""
+        try:
+            if self.loop is None or self.loop.is_closed():
+                self.loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(self.loop)
+            self.logger.debug("Event loop initialized successfully")
+        except Exception as e:
+            self.logger.error("Failed to initialize asyncio loop", exc_info=True)
+            raise InitializationError(f"Asyncio loop initialization failed: {e}") from e
+        async def parse_async(
+            self,
+            email_content: Optional[str] = None,
+            document_image: Optional[Union[str, Image.Image]] = None,
+        ) -> Dict[str, Any]:
+            if self.loop is None:
+                self.logger.error("Asyncio event loop is not initialized.")
+                return {}
+            return await self.loop.run_in_executor(
+                self.executor, self.parse, email_content, document_image
+            )
+    @property
+    def is_initialized(self) -> bool:
+        """Check if the parser is fully initialized."""
+        return self._is_initialized
+    def initialize(self, input_type: str = "text") -> None:
+        """
+        Initialize the parser with the specified input type.
+        """
+        try:
+            self.input_type = input_type
+            if not self._is_initialized:
+                with self.lock:
+                    self._initialize_executor()
+                    self._initialize_models(input_type)
+                    if self.socketio and self.sid:
+                        self.progress_emitter = ParsingProgressEmitter(self.socketio, self.sid)
+                    self._is_initialized = True
+                    self.logger.info(
+                        "Parser initialized successfully for input type: %s", input_type
+                    )
+        except Exception as e:
+            self.logger.error("Failed to initialize parser: %s", e, exc_info=True)
+            raise InitializationError(f"Parser initialization failed: {e}") from e
+    def parse_email(
+        self,
+        email_content: Optional[str] = None,
+        document_image: Optional[Image.Image] = None,
+    ) -> Dict[str, Any]:
+        """
+        Parse email content with real-time progress updates.
+        """
+        parsed_data = {}
+        try:
+            if self.progress_emitter and email_content:
+                # Count approximate number of lines for progress tracking
+                total_lines = len(email_content.splitlines())
+                self.progress_emitter.emit_parsing_started(total_lines)
+            # Parse the email content or image
+            parsed_data = self.parse(email_content, document_image)
+            # Validate the parsed data
+            is_valid, errors = validate_json(parsed_data)
+            if not is_valid:
+                self.logger.warning("Validation failed. Proceeding with partial results.")
+                parsed_data["validation_issues"] = errors
+                if self.progress_emitter:
+                    self.progress_emitter.emit_parsing_error(
+                        "Validation issues found",
+                        {"validation_issues": errors}
+                    )
+            # Emit completion event
+            if self.progress_emitter:
+                self.progress_emitter.emit_parsing_complete({
+                    "total_sections": len(parsed_data),
+                    "validation_status": "valid" if is_valid else "invalid",
+                    "timestamp": datetime.now().isoformat()
+                })
+        except Exception as e:
+            self.logger.error("Error during email parsing: %s", e)
+            parsed_data["parsing_error"] = str(e)
+            if self.progress_emitter:
+                self.progress_emitter.emit_parsing_error(str(e))
+        return parsed_data
+    def parse(
+        self,
+        email_content: Optional[str] = None,
+        document_image: Optional[Union[str, Image.Image]] = None,
+    ) -> Dict[str, Any]:
+        self.logger.info("Starting parsing process.")
+        parsed_data: Dict[str, Any] = {}
+        input_type = self._detect_input_type(email_content, document_image)
+        try:
+            with self.lock:
+                self._initialize_executor()
+                self._initialize_models(input_type)
+            stages = self._get_parsing_stages(
+                email_content, document_image, parsed_data
+            )
+            for stage in stages:
+                parsed_data = self._process_parsing_stage(stage, parsed_data)
+            return parsed_data
+        except Exception as e:
+            self.logger.error("Error during parsing: %s", e, exc_info=True)
+            return self._handle_parsing_error(e, parsed_data)
+        finally:
+            self.cleanup_resources()
+    def _detect_input_type(
+        self,
+        email_content: Optional[str],
+        document_image: Optional[Union[str, Image.Image]],
+    ) -> str:
+        if email_content and document_image:
+            return "both"
+        elif email_content:
+            return "text"
+        elif document_image:
+            return "image"
+        else:
+            # Log and handle the "none" input type case
+            self.logger.error("Both email_content and document_image are missing.")
+            return "none"
+    def _initialize_executor(self):
+        if not self.executor:
+            self.executor = ThreadPoolExecutor(
+                max_workers=self._determine_thread_count()
+            )
+            self.logger.debug("ThreadPoolExecutor initialized.")
+    def _initialize_models(self, input_type: str) -> None:
+        try:
+            if input_type in ["image", "both"] and not self.donut_model:
+                self.donut_processor, self.donut_model = self._initialize_with_retry(
+                    initialize_donut, self.logger, Config.get_model_config("donut")
+                )
+            if input_type in ["text", "both"] and not self.llama_model:
+                self.llama_model = self._initialize_with_retry(
+                    initialize_model_parser,
+                    self.logger,
+                    Config.get_model_config("llama"),
+                    prompt_templates=self._render_prompts(),
+                )
+            self.device = Config.get_device()
+        except InitializationError:
+            raise
+        except Exception as e:
+            self.logger.error("Failed to initialize models: %s", e, exc_info=True)
+            raise InitializationError(f"Model initialization failed: {e}") from e
+    def _check_environment_variables(self) -> None:
+        missing_vars = [var for var in self.REQUIRED_ENV_VARS if not os.getenv(var)]
+        if missing_vars:
+            self.logger.error(
+                "Missing required environment variables: %s",
+                ", ".join(missing_vars),
+            )
+            raise EnvironmentError(
+                f"Missing required environment variables: {', '.join(missing_vars)}"
+            )
+    def _setup_logging(self) -> logging.Logger:
+        logger = logging.getLogger("EnhancedParser")
+        if not logger.handlers:
+            handler = logging.StreamHandler()
+            formatter = logging.Formatter(
+                "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+            )
+            handler.setFormatter(formatter)
+            logger.addHandler(handler)
+            logger.setLevel(logging.DEBUG)
+        return logger
+    def _initialize_with_retry(self, init_func: Callable, *args, **kwargs) -> Any:
+        max_retries = kwargs.pop("max_retries", 3)
+        for attempt in range(max_retries):
+            try:
+                component = init_func(*args, **kwargs)
+                self.logger.debug(
+                    "Successfully initialized %s on attempt %d.",
+                    init_func.__name__,
+                    attempt + 1,
+                )
+                return component
+            except (ValueError, OSError, TypeError) as e:
+                # Log each attempt failure
+                self.logger.warning(
+                    "Initialization attempt %d for %s failed: %s. Retrying...",
+                    attempt + 1,
+                    init_func.__name__,
+                    e,
+                )
+                if attempt == max_retries - 1:
+                    self.logger.error(
+                        "Failed to initialize %s after %d attempts: %s",
+                        init_func.__name__,
+                        max_retries,
+                        e,
+                        exc_info=True,
+                    )
+                    raise InitializationError(
+                        f"Initialization failed for {init_func.__name__}: {e}"
+                    ) from e
+                torch.cuda.empty_cache()
+    def _determine_thread_count(self) -> int:
+        cpu_count = psutil.cpu_count(logical=True)
+        available_memory_gb = psutil.virtual_memory().available / (1024**3)
+        thread_count = min(
+            16,
+            cpu_count * 2,
+            int(available_memory_gb * 2),
+        )
+        self.logger.debug("Determined thread count: %d", thread_count)
+        return max(1, thread_count)
+    def _set_timeouts(self) -> Dict[str, int]:
+        """
+        Set timeouts for various processing stages from configuration.
+        Returns a dictionary of stage timeouts with fallback defaults.
+        """
+        try:
+            # Get stages configuration
+            stages_config = Config.get_full_config().get("stages", {})
+            # Set default timeouts
+            timeouts = {
+                "donut_parsing": 60,
+                "llama_text_extraction": 60,
+                "llama_validation": 45,
+                "llama_summarization": 30,
+                "post_processing": 30,
+                "json_validation": 30,
+            }
+            # Dynamically adjust timeouts based on model size or performance
+            model_size = self.config.get("model_size", "default")
+            if model_size == "large":
+                timeouts = {key: value * 2 for key, value in timeouts.items()}
+            elif model_size == "small":
+                timeouts = {key: value // 2 for key, value in timeouts.items()}
+            self.logger.debug("Initialized timeouts: %s", timeouts)
+            return timeouts
+        except Exception as e:
+            self.logger.error("Error setting timeouts, using defaults: %s", str(e))
+            return {
+                "donut_parsing": 60,
+                "llama_text_extraction": 60,
+                "llama_validation": 45,
+                "llama_summarization": 30,
+                "post_processing": 30,
+                "json_validation": 30,
+            }
+    def _render_prompts(self) -> Dict[str, str]:
+        prompts = {}
+        prompt_config = (
+            self.config.get("models", {}).get("llama", {}).get("prompt_templates", {})
+        )
+        for task, template in prompt_config.items():
+            if template:
+                data_points = Config.get_data_points()
+                template_obj = Template(template)
+                prompts[task] = template_obj.render(data_points=data_points)
+            else:
+                prompts[task] = ""
+        return prompts
+    def _get_parsing_stages(
+        self,
+        email_content: Optional[str],
+        document_image: Optional[Union[str, Image.Image]],
+        parsed_data: Dict[str, Any],
+    ) -> List[Tuple[str, Callable, Dict[str, Any]]]:
+        enabled_stages = Config.get_enabled_stages()
+        stages = []
+        if "Email Parsing" in enabled_stages and email_content:
+            stages.append(
+                (
+                    "Email Parsing",
+                    self._stage_email_parsing,
+                    {"email_content": email_content},
+                )
+            )
+        if "Donut Parsing" in enabled_stages and document_image:
+            stages.append(
+                (
+                    "Donut Parsing",
+                    self._stage_donut_parsing,
+                    {"document_image": document_image},
+                )
+            )
+        if "Text Extraction" in enabled_stages and email_content:
+            stages.append(
+                (
+                    "Text Extraction",
+                    self._stage_text_extraction,
+                    {"email_content": email_content},
+                )
+            )
+        if "Validation" in enabled_stages and email_content:
+            stages.append(
+                (
+                    "Validation",
+                    self._stage_validation,
+                    {"email_content": email_content, "parsed_data": parsed_data},
+                )
+            )
+        if "Summarization" in enabled_stages and email_content:
+            stages.append(
+                (
+                    "Summarization",
+                    self._stage_summarization,
+                    {"email_content": email_content, "parsed_data": parsed_data},
+                )
+            )
+        if "Post Processing" in enabled_stages and parsed_data:
+            stages.append(
+                (
+                    "Post Processing",
+                    self._stage_post_processing,
+                    {"parsed_data": parsed_data},
+                )
+            )
+        if "JSON Validation" in enabled_stages and parsed_data:
+            stages.append(
+                (
+                    "JSON Validation",
+                    self._stage_json_validation,
+                    {"parsed_data": parsed_data},
+                )
+            )
+        return stages
+    def _process_parsing_stage(
+        self,
+        stage: Tuple[str, Callable, Dict[str, Any]],
+        parsed_data: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        stage_name, stage_method, kwargs = stage
+        self.logger.info("Starting stage: %s", stage_name)
+        try:
+            future = self.executor.submit(stage_method, **kwargs)
+            stage_result = future.result(timeout=self._get_stage_timeout(stage_name))
+            if isinstance(stage_result, dict) and stage_result:
+                parsed_data = self.data_merger.merge_parsed_data(
+                    parsed_data, stage_result
+                )
+            self.logger.info("Completed stage: %s", stage_name)
+            return parsed_data
+        except Exception as e:
+            # Log the error but continue with the next stage
+            self.logger.error(
+                "Error during stage '%s'. Continuing with partial results: %s", stage_name, e
+            )
+            return parsed_data  # Return what we have so far
+    def _get_stage_timeout(self, stage_name: str) -> int:
+        stage_key = stage_name.lower().replace(" ", "_")
+        return self.timeouts.get(stage_key, 60)
+    def _handle_parsing_error(
+        self, error: Exception, parsed_data: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        self.logger.error("Parsing process failed: %s", error, exc_info=True)
+        parsed_data["validation_issues"] = parsed_data.get("validation_issues", []) + [
+            str(error)
+        ]
+        return parsed_data
+    def _handle_stage_error(
+        self, stage_name: str, error: Exception, parsed_data: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        if isinstance(error, (ConcurrentTimeoutError, ParsingError, ValidationError)):
+            parsed_data["validation_issues"] = parsed_data.get(
+                "validation_issues", []
+            ) + [str(error)]
+        else:
+            parsed_data["validation_issues"] = parsed_data.get(
+                "validation_issues", []
+            ) + [f"Unexpected error in stage '{stage_name}': {error}"]
+        return parsed_data
+    def _stage_email_parsing(
+        self, email_content: Optional[str] = None
+    ) -> Dict[str, Any]:
+        if not email_content:
+            self.logger.warning("No email content provided for Email Parsing.")
             return {}
         try:
             subject, from_address, body, attachments = parse_email(email_content)
@@ -480,13 +867,15 @@
 // webpack.config.js
 const path = require('path');
 const MiniCssExtractPlugin = require('mini-css-extract-plugin');
-const HtmlWebpackPlugin = require('html-webpack-plugin'); // To generate HTML files
+const HtmlWebpackPlugin = require('html-webpack-plugin');
+const { CleanWebpackPlugin } = require('clean-webpack-plugin');
+const webpack = require('webpack');
 module.exports = (env, argv) => {
   const isProduction = argv.mode === 'production';
   return {
     mode: isProduction ? 'production' : 'development',
     entry: {
-      main: './frontend/index.js', // Updated entry point
+      main: './frontend/index.js',
     },
     output: {
       path: path.resolve(__dirname, 'static/dist'),
@@ -510,513 +899,60 @@ module.exports = (env, argv) => {
       compress: true,
       port: 8080,
       hot: true,
-      historyApiFallback: {
-        rewrites: [
-          { from: /^\/static\/dist\/[a-z0-9]+\.[a-z0-9]+\.[a-z0-9]+\.(js|css)$/, to: (context) => context.parsedUrl.pathname },
-        ],
-      },
+      liveReload: true,
+      historyApiFallback: true,
       proxy: {
-        '/api': 'http://localhost:5000',
+        '/api': {
+          target: 'http://127.0.0.1:5000',
+          changeOrigin: true,
+          secure: false,
+          pathRewrite: {'^/api': '/api'},
+          logLevel: 'debug'
+        },
         '/socket.io': {
-          target: 'http://localhost:5000',
+          target: 'http://127.0.0.1:5000',
           ws: true,
           changeOrigin: true,
-          timeout: 60000, 
-      proxyTimeout: 60000,
+          timeout: 60000,
+          proxyTimeout: 60000,
+          logLevel: 'debug',
         },
       },
     },
     module: {
       rules: [
         {
-          test: /\.(js|jsx)$/, // Handle JS and JSX files
+          test: /\.(js|jsx)$/,
           exclude: /node_modules/,
           use: {
             loader: 'babel-loader',
+            options: {
+              cacheDirectory: true, // Speeds up Babel compilation by caching
+            },
           },
         },
         {
-          test: /\.css$/, // Handle CSS files
+          test: /\.css$/,
           use: [
-            isProduction ? MiniCssExtractPlugin.loader : 'style-loader', // Extract CSS in production
+            isProduction ? MiniCssExtractPlugin.loader : 'style-loader',
             {
               loader: 'css-loader',
               options: {
-                importLoaders: 1, // Number of loaders applied before CSS loader
+                importLoaders: 1,
+                sourceMap: !isProduction,
               },
             },
-            'postcss-loader', // Apply PostCSS transformations
+            'postcss-loader',
           ],
         },
         {
-          test: /\.(png|jpe?g|gif|svg)$/i, // Handle image assets
+          test: /\.(png|jpe?g|gif|svg)$/i,
           type: 'asset/resource',
           generator: {
-            filename: 'images/[hash][ext][query]', // Output images to images/ directory
+            filename: 'images/[hash][ext][query]',
           },
         },
-      ],
-    },
-    resolve: {
-      extensions: ['.js', '.jsx', '.css'], // Resolve these extensions
-      alias: {
-        '@': path.resolve(__dirname, 'frontend'),
-        '@components': path.resolve(__dirname, 'frontend/components'),
-        '@actions': path.resolve(__dirname, 'frontend/actions'),
-        '@reducers': path.resolve(__dirname, 'frontend/reducers'),
-        '@core': path.resolve(__dirname, 'frontend/core'),
-        '@utils': path.resolve(__dirname, 'frontend/utils'),
-        '@css': path.resolve(__dirname, 'frontend/static/css'),
-      },
-    },
-    plugins: [
-      new MiniCssExtractPlugin({
-        filename: isProduction ? '[name].[contenthash].css' : '[name].css',
-      }),
-      new HtmlWebpackPlugin({
-        template: path.resolve(__dirname, 'templates', 'index.html'),
-        filename: 'index.html',
-        inject: 'body',
-        minify: isProduction
-          ? {
-              removeComments: true,
-              collapseWhitespace: true,
-              removeRedundantAttributes: true,
-            }
-          : false,
-      }),
-    ],
-    optimization: {
-      splitChunks: {
-        chunks: 'all',
-      },
-      runtimeChunk: 'single',
-    },
-    performance: {
-      hints: isProduction ? 'warning' : false,
-    },
-  };
-};
-
-
-
-
-# -------------------- C:\Users\jorda\OneDrive\Desktop\Quickbase Dev Work\KeystoneEmailParser\tailwind.config.js --------------------
-
-// tailwind.config.js
-module.exports = {
-  content: ['./frontend/**/*.{js,jsx,ts,tsx}', './templates/**/*.html'], // Replace 'purge' with 'content'
-  darkMode: 'media', // Change to 'media' or remove the line for default behavior
-  theme: {
-    extend: {},
-  },
-  plugins: [],
-};
-
-
-
-
-# -------------------- C:\Users\jorda\OneDrive\Desktop\Quickbase Dev Work\KeystoneEmailParser\package.json --------------------
-
-{
-  "name": "keystone-email-parser",
-  "version": "1.0.0",
-  "description": "Email parsing application with React frontend",
-  "main": "static/js/main.js",
-  "scripts": {
-    "start": "concurrently \"python app.py\" \"webpack serve --mode development\"",
-    "start:frontend": "webpack serve --mode development",
-    "start:backend": "python app.py",
-    "build": "webpack --mode development",
-    "build:prod": "webpack --mode production",
-    "watch": "webpack --watch --mode development",
-    "clean": "del-cli static/dist/*",
-    "lint": "eslint src/**/*.{js,jsx}",
-    "test": "echo \"No tests specified\" && exit 0"
-  },
-  "dependencies": {
-    "@babel/runtime": "^7.22.5",
-    "@headlessui/react": "^2.2.0",
-    "@reduxjs/toolkit": "^1.9.5",
-    "axios": "^1.7.7",
-    "dompurify": "^3.1.7",
-    "file-saver": "^2.0.5",
-    "jspdf": "^2.5.1",
-    "length": "^0.0.1",
-    "lodash": "^4.17.21",
-    "lottie-web": "^5.12.2",
-    "lucide-react": "^0.263.1",
-    "prop-types": "^15.8.1",
-    "react": "^18.2.0",
-    "react-copy-to-clipboard": "^5.1.0",
-    "react-dom": "^18.2.0",
-    "react-focus-lock": "^2.13.2",
-    "react-redux": "^8.1.1",
-    "react-syntax-highlighter": "^15.6.1",
-    "recharts": "^2.5.0",
-    "redux": "^4.2.1",
-    "redux-thunk": "^2.4.2",
-    "socket.io-client": "^4.5.4",
-    "uuid": "^11.0.2"
-  },
-  "devDependencies": {
-    "@babel/core": "^7.26.0",
-    "@babel/plugin-proposal-class-properties": "^7.18.6",
-    "@babel/plugin-transform-runtime": "^7.25.9",
-    "@babel/preset-env": "^7.26.0",
-    "@babel/preset-react": "^7.25.9",
-    "autoprefixer": "^10.4.20",
-    "babel-loader": "^9.2.1",
-    "clean-webpack-plugin": "^4.0.0",
-    "concurrently": "^9.0.1",
-    "cross-env": "^7.0.3",
-    "css-loader": "^6.11.0",
-    "del-cli": "^6.0.0",
-    "eslint": "^8.56.0",
-    "eslint-plugin-react": "^7.33.2",
-    "eslint-plugin-react-hooks": "^4.6.0",
-    "html-webpack-plugin": "^5.6.3",
-    "mini-css-extract-plugin": "^2.9.1",
-    "postcss": "^8.4.47",
-    "postcss-loader": "^7.3.4",
-    "rimraf": "^5.0.5",
-    "style-loader": "^3.3.4",
-    "tailwindcss": "^3.4.14",
-    "webpack": "^5.95.0",
-    "webpack-cli": "^5.1.4",
-    "webpack-dev-server": "^4.15.0"
-  },
-  "browser": {
-    "@": "./static",
-    "@components": "./static/components",
-    "@actions": "./static/js/actions",
-    "@reducers": "./static/js/reducers",
-    "@core": "./static/js/core",
-    "@utils": "./static/js/utils",
-    "@ui": "./static/js/ui",
-    "@css": "./static/css"
-  },
-  "engines": {
-    "node": ">=14.0.0",
-    "npm": ">=6.0.0"
-  },
-  "browserslist": {
-    "production": [
-      ">0.2%",
-      "not dead",
-      "not op_mini all"
-    ],
-    "development": [
-      "last 1 chrome version",
-      "last 1 firefox version",
-      "last 1 safari version"
-    ]
-  }
-}
-
-
-
-
-# -------------------- C:\Users\jorda\OneDrive\Desktop\Quickbase Dev Work\KeystoneEmailParser\jsconfig.json --------------------
-
-// jsconfig.json
-{
-  "compilerOptions": {
-    "baseUrl": ".",
-    "paths": {
-      "@/*": ["frontend/*"],
-      "@components/*": ["frontend/components/*"],
-      "@actions/*": ["frontend/actions/*"],
-      "@reducers/*": ["frontend/reducers/*"],
-      "@core/*": ["frontend/core/*"],
-      "@utils/*": ["frontend/utils/*"],
-      "@css/*": ["frontend/static/css/*"]
-    }
-  }
-}
-
-
-
-
-# -------------------- C:\Users\jorda\OneDrive\Desktop\Quickbase Dev Work\KeystoneEmailParser\app.py --------------------
-
-# src/app.py
-eventlet.monkey_patch()
-# Set memory fraction to 90% of total GPU memory
-if torch.cuda.is_available():
-    torch.cuda.set_per_process_memory_fraction(0.9)
-    # Clear the FFT plan cache for potentially faster CUDA operations
-    torch.backends.cuda.cufft_plan_cache.clear()
-def setup_logging() -> logging.Logger:
-    formatter = json_log_formatter.JSONFormatter()
-    json_handler = logging.StreamHandler()
-    json_handler.setFormatter(formatter)
-    logger = logging.getLogger("AppLogger")
-    logger.addHandler(json_handler)
-    logger.setLevel(logging.DEBUG)
-    return logger
-def init_app() -> (Flask, SocketIO):
-    load_dotenv()
-    app = Flask(__name__, static_folder='static', template_folder='templates')
-    socketio = SocketIO(
-        app,
-        cors_allowed_origins="*",
-        logger=True,
-        engineio_logger=True,
-        async_mode="eventlet",
-    )
-    return app, socketio
-def setup_cache_dirs(logger: logging.Logger):
-    cache_dir = str(Path("D:/AiHub"))
-    os.environ["HF_HOME"] = cache_dir
-    os.makedirs(cache_dir, exist_ok=True)
-    logger.info("Cache directory set to: %s", cache_dir)
-    if torch.cuda.is_available():
-        logger.info("CUDA available: %s", torch.cuda.get_device_name(0))
-    else:
-        logger.info("CUDA not available, using CPU")
-logger = setup_logging()
-app, socketio = init_app()
-def format_schema_output(formatted_data: Dict[str, Any]) -> str:
-    output = []
-    for section, fields in formatted_data.items():
-        output.append(section)
-        output.append("")
-        for field, value in fields.items():
-            output.append(f"{field}: {value}")
-        output.append("")
-    return "\n".join(output)
-def make_serializable(obj: Any) -> Any:
-    if isinstance(obj, (np.float32, np.float64)):
-        return float(obj)
-    elif isinstance(obj, (np.int32, np.int64)):
-        return int(obj)
-    elif isinstance(obj, dict):
-        return {k: make_serializable(v) for k, v in obj.items()}
-    elif isinstance(obj, list):
-        return [make_serializable(element) for element in obj]
-    elif isinstance(obj, tuple):
-        return tuple(make_serializable(element) for element in obj)
-    elif isinstance(obj, set):
-        return [make_serializable(element) for element in obj]
-    elif isinstance(obj, (float, int, str)):
-        return obj
-    else:
-        return str(obj)
-def background_parse(
-    sid: str,
-    parser_option: str,
-    email_content: str,
-    document_image: Optional[Image.Image],
-):
-    # Create event loop for this thread
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        input_type = None
-        if email_content and document_image:
-            input_type = 'both'
-        elif email_content:
-            input_type = 'text'
-        elif document_image:
-            input_type = 'image'
-        parser = ParserRegistry.get_parser(
-            parser_option=ParserOption(parser_option),
-            socketio=socketio,
-            sid=sid,
-        )
-        if parser is None:
-            socketio.emit(
-                "parsing_error", {"error": f"Parser for option {parser_option} not found."}, room=sid
-            )
-            return
-        with parser:
-            if not parser.is_initialized:
-                parser.initialize(input_type=input_type)
-            if not parser.health_check():
-                socketio.emit(
-                    "parsing_error", {"error": "Parser health check failed."}, room=sid
-                )
-                return
-            socketio.emit(
-                "parsing_started", {"message": "Parsing started..."}, room=sid
-            )
-            stages = [
-                {"stage": "Initializing parser", "progress": 10},
-                {"stage": "Processing email content", "progress": 30},
-                {"stage": "Extracting entities", "progress": 50},
-                {"stage": "Finalizing results", "progress": 80},
-                {"stage": "Completed", "progress": 100},
-            ]
-            for step in stages:
-                socketio.emit(
-                    "parsing_progress",
-                    {"stage": step["stage"], "progress": step["progress"]},
-                    room=sid,
-                )
-                socketio.sleep(1)
-            result = parser.parse_email(
-                email_content=email_content, document_image=document_image
-            )
-            # Handle structured_data and metadata
-            structured_data = result.get("structured_data", {})
-            metadata = result.get("metadata", {})
-            # Optionally, log or use metadata
-            logger.debug("Metadata from parsing: %s", metadata)
-            if "email_metadata" in structured_data:
-                formatted_text = format_schema_output(structured_data["email_metadata"])
-                structured_data["formatted_schema"] = formatted_text
-            serializable_result = make_serializable(structured_data)
-            logger.debug("Serialized Result: %s", serializable_result)
-            socketio.emit(
-                "parsing_completed", {"result": serializable_result}, room=sid
-            )
-    except Exception as e:
-        logger.error("Error during parsing: %s", e, exc_info=True)
-        error_info = {
-            "type": "unexpected_error",
-            "message": f"An unexpected error occurred: {str(e)}",
-            "time": datetime.now(timezone.utc).isoformat(),
-            "exc_info": traceback.format_exc(),
-        }
-        serializable_error = make_serializable(error_info)
-        socketio.emit("parsing_error", {"error": serializable_error}, room=sid)
-    finally:
-        loop.close()
-@app.route("/", methods=["GET"])
-def index():
-    logger.info("Rendering index page.")
-    return render_template("index.html")
-@app.route("/favicon.ico")
-def favicon_route():
-    favicon_path = os.path.join(app.root_path, "static", "favicon.ico")
-    if os.path.exists(favicon_path):
-        return send_from_directory(
-            os.path.join(app.root_path, "static"),
-            "favicon.ico",
-            mimetype="image/vnd.microsoft.icon",
-        )
-    logger.warning("favicon.ico not found at path: %s", favicon_path)
-    return jsonify({"error_message": "favicon.ico not found."}), 404
-@app.route("/parse_email", methods=["POST"])
-def parse_email_route():
-    email_content = request.form.get("email_content", "").strip()
-    image_file = request.files.get("document_image")
-    parser_option_str = request.form.get("parser_option", "").strip()
-    socket_id = request.form.get("socket_id")
-    if not email_content and not image_file:
-        logger.warning("No email content or document image provided.")
-        return (
-            jsonify(
-                {"error_message": "Please provide email content or document image"}
-            ),
-            400,
-        )
-    if not parser_option_str:
-        logger.warning("No parser option selected.")
-        return jsonify({"error_message": "Please select a parser option."}), 400
-    sid = socket_id
-    if not sid:
-        logger.warning("No socket ID provided.")
-        return jsonify({"error_message": "Socket ID not provided."}), 400
-    logger.info("Received Socket ID: %s", sid)
-    try:
-        parser_option = ParserOption(parser_option_str)
-    except ValueError:
-        logger.warning("Invalid parser option selected: %s", parser_option_str)
-        return (
-            jsonify({"error_message": f"Invalid parser option: {parser_option_str}"}),
-            400,
-        )
-    try:
-        # Adjusted get_parser call without 'input_type'
-        parser_config = ParserRegistry.get_parser(parser_option, socketio=socketio, sid=sid)
-    except InitializationError as ie:
-        logger.error("Parser initialization failed: %s", ie)
-        return jsonify({"error_message": str(ie)}), 500
-    except Exception as e:
-        logger.error(
-            "Unexpected error during parser initialization: %s", e, exc_info=True
-        )
-        return jsonify({"error_message": "Parser initialization failed"}), 500
-    if parser_config is None:
-        logger.error("Parser could not be initialized.")
-        return jsonify({"error_message": "Parser could not be initialized"}), 500
-    document_image = None
-    if image_file:
-        try:
-            document_image = Image.open(io.BytesIO(image_file.read()))
-        except Exception as e:
-            logger.error("Image processing failed: %s", e, exc_info=True)
-            return jsonify({"error_message": "Invalid image format"}), 400
-    socketio.start_background_task(
-        background_parse, sid, parser_option_str, email_content, document_image
-    )
-    logger.info("Parsing started for Socket ID: %s", sid)
-    return jsonify({"message": "Parsing started"}), 202
-@app.route("/health", methods=["GET"])
-def health_check_route():
-    try:
-        status = ParserRegistry.health_check()
-        logger.info("Health check passed.")
-        return jsonify({"status": "healthy", "parsers": status}), 200
-    except Exception as e:
-        logger.error("Health check failed: %s", e, exc_info=True)
-        return jsonify({"status": "unhealthy", "error": str(e)}), 500
-@socketio.on("connect")
-def handle_connect():
-    sid = request.sid
-    logger.info("Client connected: %s", sid)
-@socketio.on("disconnect")
-def handle_disconnect():
-    sid = request.sid
-    logger.info("Client disconnected: %s", sid)
-@app.errorhandler(Exception)
-def handle_exception(e: Exception):
-    logger.error("Unhandled exception: %s", e, exc_info=True)
-    return jsonify({"error_message": "An internal error occurred."}), 500
-@app.errorhandler(404)
-def page_not_found(e: Exception):
-    logger.warning("404 error: %s not found. Exception: %s", request.url, e)
-    return (
-        jsonify({"error_message": "The requested URL was not found on the server."}),
-        404,
-    )
-def signal_handler(_sig, _frame):
-    try:
-        logger.info("Shutdown initiated...")
-        ParserRegistry.cleanup_parsers()
-        logger.info("Cleanup completed successfully.")
-    except Exception as e:
-        logger.error("Error during cleanup: %s", e, exc_info=True)
-    finally:
-        sys.exit(0)
-if __name__ == "__main__":
-    try:
-        logger.info("Starting application initialization...")
-        setup_cache_dirs(logger)
-        logger.info("Loading configuration...")
-        Config.initialize()
-        logger.info("Configuration loaded successfully")
-        host = os.getenv("HOST", "127.0.0.1")
-        port = int(os.getenv("PORT", "5000"))
-        logger.info("Server will start on %s:%d", host, port)
-        static_dir = os.path.join(app.root_path, "static")
-        if not os.path.exists(static_dir):
-            os.makedirs(static_dir)
-            logger.info("Created static directory at %s", static_dir)
-        ParserRegistry.initialize_parsers()
-        logger.info("Parsers initialized successfully")
-        # Register signal handlers for graceful shutdown
-        signal.signal(signal.SIGINT, signal_handler)
-        signal.signal(signal.SIGTERM, signal_handler)
-        socketio.run(app, host=host, port=port, debug=True, use_reloader=False)
-    except InitializationError as ie:
-        logger.critical(
-            "Parser initialization failed during startup: %s", ie, exc_info=True
-        )
-        try:
-            ParserRegistry.cleanup_parsers()
-        except Exception as cleanup_e:
-            logger.error(
-                "Error during cleanup after failed startup: %s",
+        {
+          test: /\.(woff(2)?|eot|ttf|otf|svg)$/, // Handle fonts and additional SVGs
+          type: 'asset/resource',
+          generator: {

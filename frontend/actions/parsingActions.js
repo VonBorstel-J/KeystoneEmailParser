@@ -1,8 +1,7 @@
 // frontend/actions/parsingActions.js
 import { parseEmail as parseEmailAPI } from '../actions/api';
-import socketIOClient from 'socket.io-client';
 import { setupSocketListeners } from '../core/socketListeners';
-import { generateId } from '../utils/helpers';
+import socketManager from '../utils/socket';
 
 /**
  * Action to start the parsing process.
@@ -11,24 +10,44 @@ import { generateId } from '../utils/helpers';
 export const startParsing = (data) => async (dispatch) => {
   dispatch({ type: 'START_PARSING' });
 
+  let socket = null;
+  
   try {
-    // Generate a unique socket ID for this session if not provided
-    const socketId = data.socket_id || generateId();
-    const socket = socketIOClient('http://localhost:8080', {
-      path: '/socket.io',
-      transports: ['websocket', 'polling'],
-    });
+    // Connect socket first
+    socket = await socketManager.connect();
+    
+    if (!socket.connected) {
+      throw new Error('Failed to establish socket connection');
+    }
 
-    setupSocketListeners(socket, dispatch); // Attach listeners for socket events
+    // Set up socket listeners
+    setupSocketListeners(socket, dispatch);
 
-    await parseEmailAPI({ ...data, socket_id: socketId });
-    // Parsing is handled via WebSocket events, no need to wait for response from parseEmailAPI
+    // Create form data with socket ID
+    const formData = new FormData();
+    if (data.email_content) formData.append('email_content', data.email_content);
+    if (data.document_image) formData.append('document_image', data.document_image);
+    formData.append('parser_option', data.parser_option);
+    formData.append('socket_id', socket.id);
+
+    // Make API call
+    const response = await parseEmailAPI(formData);
+
+    if (!response.success) {
+      throw new Error(response.message || 'Failed to start parsing');
+    }
+
   } catch (error) {
     console.error('Error during parsing start:', error);
     dispatch({
       type: 'SET_ERROR',
-      payload: error.response?.data?.error_message || 'Parsing failed. Please try again.',
+      payload: error.message || 'Failed to start parsing. Please try again.'
     });
+    
+    // Clean up socket on error
+    if (socket) {
+      socketManager.disconnect();
+    }
   }
 };
 

@@ -10,13 +10,41 @@
 const App = () => {
   const parsingProgress = useSelector((state) => state.parsing.parsingProgress);
   const parsingResult = useSelector((state) => state.parsing.parsingResult);
+  const error = useSelector((state) => state.parsing.error);
   return (
-    <div className="min-h-screen bg-gray-100">
+    <div className="min-h-screen bg-gray-100 flex flex-col">
       <Header />
-      <main className="container mx-auto p-4">
-        <ParserForm />
-        {parsingProgress && <ProgressBar />}
-        {parsingResult && <ResultViewer />}
+      <main className="container mx-auto p-4 flex-grow">
+        {/* Display error if it exists */}
+        {error && (
+          <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-4">
+            <strong className="font-bold">Error: </strong>
+            <span className="block sm:inline">{error}</span>
+          </div>
+        )}
+        {/* Hide the form if parsing is in progress */}
+        {!parsingProgress && !parsingResult && <ParserForm />}
+        {/* Display progress if parsing is in progress */}
+        {parsingProgress && (
+          <div className="mb-4">
+            <ProgressBar />
+            <p className="text-gray-700 mt-2">
+              Current Stage: {parsingProgress.stage} - {parsingProgress.percentage}% complete
+            </p>
+          </div>
+        )}
+        {/* Show results after parsing is complete */}
+        {parsingResult && (
+          <div className="mb-4">
+            <ResultViewer />
+            <button
+              className="bg-blue-500 text-white px-4 py-2 rounded mt-4"
+              onClick={() => window.location.reload()}
+            >
+              Start New Parsing
+            </button>
+          </div>
+        )}
       </main>
       <ToastContainer />
     </div>
@@ -29,20 +57,75 @@ export default App;
 
 # -------------------- C:\Users\jorda\OneDrive\Desktop\Quickbase Dev Work\KeystoneEmailParser\frontend\index.js --------------------
 
-// frontend/index.js
+// frontend\index.js
 const container = document.getElementById('root');
-const root = createRoot(container); // Create a root
-root.render(
-  <Provider store={store}>
-    <App />
-  </Provider>
-);
+// Make sure the container exists before trying to create a root
+if (container) {
+  const root = createRoot(container);
+  root.render(
+    <React.StrictMode>
+      <Provider store={store}>
+        <ErrorBoundary>
+          <App />
+        </ErrorBoundary>
+      </Provider>
+    </React.StrictMode>
+  );
+} else {
+  console.error('Root container not found. Unable to initialize the application.');
+}
 
 
 
 
 # -------------------- C:\Users\jorda\OneDrive\Desktop\Quickbase Dev Work\KeystoneEmailParser\frontend\components\App.jsx --------------------
 
+// frontend/components/App.jsx
+/**
+ * App component serves as the root of the application.
+ * It includes the Header, ParserForm, ProgressBar, ResultViewer, and ToastContainer.
+ */
+const App = () => {
+  const { parsingProgress, parsingResult, error, toasts } = useSelector((state) => state.parsing);
+  return (
+    <div className="min-h-screen flex flex-col bg-gray-100">
+      <Header />
+      <main className="container mx-auto p-4 flex-grow">
+        {/* Display error message */}
+        {error && (
+          <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-4">
+            <strong className="font-bold">Error: </strong>
+            <span className="block sm:inline">{error}</span>
+          </div>
+        )}
+        {/* Conditional rendering of form, progress, and results */}
+        {!parsingProgress && !parsingResult && <ParserForm />}
+        {parsingProgress && (
+          <div className="mb-4">
+            <ProgressBar />
+            <p className="text-gray-700 mt-2">
+              {`Stage: ${parsingProgress.stage} - ${parsingProgress.percentage}% complete`}
+            </p>
+          </div>
+        )}
+        {parsingResult && (
+          <div className="mb-4">
+            <ResultViewer />
+            <button
+              className="bg-blue-500 text-white px-4 py-2 rounded mt-4"
+              onClick={() => window.location.reload()}
+            >
+              Start New Parsing
+            </button>
+          </div>
+        )}
+      </main>
+      {/* Toast notifications */}
+      <ToastContainer toasts={toasts} />
+    </div>
+  );
+};
+export default App;
 
 
 
@@ -79,12 +162,27 @@ export default Header;
  * @param {Object} props - Properties passed to the component.
  * @param {string} props.message - The message to display.
  * @param {string} props.type - Type of the toast (e.g., success, error).
+ * @param {Function} props.onClose - Callback function to handle toast close.
  */
-const Toast = ({ message, type }) => {
+const Toast = ({ message, type, onClose }) => {
   const bgColor = type === 'error' ? 'bg-red-500' : 'bg-green-500';
   return (
-    <div className={`fixed bottom-4 right-4 p-4 rounded shadow text-white ${bgColor}`}>
-      {message}
+    <div
+      className={`fixed bottom-4 right-4 p-4 rounded shadow text-white flex items-start ${bgColor}`}
+      role="alert"
+      aria-live="assertive"
+      aria-atomic="true"
+    >
+      <div className="flex-1">
+        {message}
+      </div>
+      <button
+        onClick={onClose}
+        className="ml-4 bg-transparent border-none text-white font-bold"
+        aria-label="Close notification"
+      >
+        &times;
+      </button>
     </div>
   );
 };
@@ -163,35 +261,42 @@ export default ProgressBar;
 const ResultViewer = () => {
   const parsingResult = useSelector((state) => state.parsing.parsingResult);
   const [view, setView] = useState('human'); // 'human' or 'json'
+  // If there's no parsing result, return null to avoid rendering anything
   if (!parsingResult) return null;
+  // Button list to avoid redundancy
+  const views = [
+    { type: 'human', label: 'Human Readable' },
+    { type: 'json', label: 'JSON' },
+  ];
   return (
     <div className="mt-6 bg-white p-6 rounded shadow-md">
       <div className="flex justify-between items-center mb-4">
         <h2 className="text-xl font-bold">Parsed Results</h2>
-        <div>
-          <button
-            onClick={() => setView('human')}
-            className={`mr-2 px-3 py-1 rounded ${view === 'human' ? 'bg-blue-500 text-white' : 'bg-gray-200'}`}
-          >
-            Human Readable
-          </button>
-          <button
-            onClick={() => setView('json')}
-            className={`px-3 py-1 rounded ${view === 'json' ? 'bg-blue-500 text-white' : 'bg-gray-200'}`}
-          >
-            JSON
-          </button>
+        <div className="flex items-center">
+          {views.map(({ type, label }) => (
+            <button
+              key={type}
+              onClick={() => setView(type)}
+              className={`mr-2 px-3 py-1 rounded transition-colors duration-200 ${
+                view === type ? 'bg-blue-500 text-white' : 'bg-gray-200 hover:bg-gray-300'
+              }`}
+              aria-pressed={view === type}
+              aria-label={`View parsed results as ${label}`}
+            >
+              {label}
+            </button>
+          ))}
         </div>
       </div>
+      {/* Render the appropriate component based on the selected view */}
       {view === 'human' ? <HumanReadable data={parsingResult} /> : <JsonView data={parsingResult} />}
-      <DownloadButton data={parsingResult} />
+      {/* Download Button */}
+      <div className="mt-4">
+        <DownloadButton data={parsingResult} />
+      </div>
     </div>
   );
 };
-// frontend/components/ParsingOverlay/index.jsx
-export { default as ParserForm } from './ParserForm';
-export { default as ProgressBar } from './ProgressBar';
-export { default as StatusIndicator } from './StatusIndicator';
 export default ResultViewer;
 
 
@@ -199,90 +304,220 @@ export default ResultViewer;
 
 # -------------------- C:\Users\jorda\OneDrive\Desktop\Quickbase Dev Work\KeystoneEmailParser\frontend\components\ParsingOverlay\ParserForm.jsx --------------------
 
-// frontend/components/ParsingOverlay/ParserForm.jsx
-/**
- * ParserForm component allows users to submit email content or upload a document image.
- */
 const ParserForm = () => {
   const [emailContent, setEmailContent] = useState('');
   const [documentImage, setDocumentImage] = useState(null);
-  const [parserOption, setParserOption] = useState('');
+  const [parserOption, setParserOption] = useState('enhanced_parser');
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const dispatch = useDispatch();
   useEffect(() => {
-    setupSocketListeners(socket, dispatch);
-    // Clean up on unmount
-    return () => {
-      socket.off('parsing_started');
-      socket.off('parsing_progress');
-      socket.off('parsing_completed');
-      socket.off('parsing_error');
-    };
-  }, [dispatch]);
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    const inputs = { parser_option: parserOption, email_content: emailContent, document_image: documentImage };
-    const validation = validateForm(inputs);
-    if (!validation.isValid) {
+    // Set up socket event listeners
+    socket.on('connect', () => {
+      console.log('Socket connected:', socket.id);
+    });
+    socket.on('connect_error', (error) => {
+      console.error('Socket connection error:', error);
       dispatch({
         type: 'SET_ERROR',
-        payload: validation.message,
+        payload: 'Connection error. Please refresh and try again.',
+      });
+    });
+    socket.on('parsing_started', handleParsingStarted);
+    socket.on('parsing_progress', handleParsingProgress);
+    socket.on('parsing_completed', handleParsingCompleted);
+    socket.on('parsing_error', handleParsingError);
+    // Cleanup on unmount
+    return () => {
+      socket.off('parsing_started', handleParsingStarted);
+      socket.off('parsing_progress', handleParsingProgress);
+      socket.off('parsing_completed', handleParsingCompleted);
+      socket.off('parsing_error', handleParsingError);
+    };
+  }, [dispatch]);
+  const validateForm = () => {
+    if (!emailContent.trim() && !documentImage) {
+      dispatch({
+        type: 'SET_ERROR',
+        payload: 'Please provide either email content or a document image.',
+      });
+      return false;
+    }
+    return true;
+  };
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (isSubmitting) return;
+    if (!validateForm()) return;
+    if (!socket.connected) {
+      dispatch({
+        type: 'SET_ERROR',
+        payload: 'No connection to server. Please refresh and try again.',
       });
       return;
     }
-    dispatch(startParsing({ parser_option: parserOption, email_content: emailContent, document_image: documentImage, socket_id: socket.id }));
+    try {
+      setIsSubmitting(true);
+      const formData = new FormData();
+      formData.append('parser_option', parserOption);
+      if (emailContent.trim()) {
+        formData.append('email_content', emailContent.trim());
+      }
+      if (documentImage) {
+        formData.append('document_image', documentImage);
+      }
+      formData.append('socket_id', socket.id);
+      dispatch(startParsing(formData));
+    } catch (error) {
+      console.error('Error submitting form:', error);
+      dispatch({
+        type: 'SET_ERROR',
+        payload: 'Failed to start parsing. Please try again.',
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+  const handleParsingStarted = () => {
+    dispatch({ type: 'START_PARSING' });
+    dispatch({
+      type: 'ADD_TOAST',
+      payload: {
+        id: Date.now(),
+        type: 'info',
+        message: 'Parsing started...',
+      },
+    });
+  };
+  const handleParsingProgress = (data) => {
+    dispatch({
+      type: 'UPDATE_PROGRESS',
+      payload: data,
+    });
+  };
+  const handleParsingCompleted = (result) => {
+    setIsSubmitting(false);
+    dispatch({
+      type: 'COMPLETE_PARSING',
+      payload: result,
+    });
+    dispatch({
+      type: 'ADD_TOAST',
+      payload: {
+        id: Date.now(),
+        type: 'success',
+        message: 'Parsing completed successfully!',
+      },
+    });
+  };
+  const handleParsingError = (error) => {
+    setIsSubmitting(false);
+    console.error('Parsing error:', error);
+    dispatch({
+      type: 'SET_ERROR',
+      payload: error.error || 'An error occurred during parsing.',
+    });
+    dispatch({
+      type: 'ADD_TOAST',
+      payload: {
+        id: Date.now(),
+        type: 'error',
+        message: error.error || 'Parsing failed. Please try again.',
+      },
+    });
   };
   return (
-    <form onSubmit={handleSubmit} className="bg-white p-6 rounded shadow-md">
-      <div className="mb-4">
-        <label htmlFor="email_content" className="block text-gray-700">
-          Email Content
-        </label>
-        <textarea
-          id="email_content"
-          value={emailContent}
-          onChange={(e) => setEmailContent(e.target.value)}
-          className="w-full mt-2 p-2 border rounded"
-          rows="4"
-          placeholder="Enter email content here..."
-        ></textarea>
+    <form onSubmit={handleSubmit} className="bg-white p-6 rounded-lg shadow-md">
+      <div className="space-y-6">
+        {/* Email Content Input */}
+        <div>
+          <label htmlFor="email_content" className="block text-sm font-medium text-gray-700">
+            Email Content
+          </label>
+          <div className="mt-1">
+            <textarea
+              id="email_content"
+              name="email_content"
+              rows={6}
+              value={emailContent}
+              onChange={(e) => setEmailContent(e.target.value)}
+              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+              placeholder="Paste your email content here..."
+            />
+          </div>
+          <p className="mt-1 text-sm text-gray-500">
+            Paste the email content you want to parse
+          </p>
+        </div>
+        {/* Document Image Upload */}
+        <div>
+          <label htmlFor="document_image" className="block text-sm font-medium text-gray-700">
+            Document Image
+          </label>
+          <div className="mt-1">
+            <input
+              id="document_image"
+              name="document_image"
+              type="file"
+              accept="image/*"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) {
+                  if (file.size > 5 * 1024 * 1024) {
+                    dispatch({
+                      type: 'SET_ERROR',
+                      payload: 'File size must be less than 5MB',
+                    });
+                    return;
+                  }
+                  setDocumentImage(file);
+                }
+              }}
+              className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
+            />
+          </div>
+          <p className="mt-1 text-sm text-gray-500">
+            Upload a document image (JPG, PNG, max 5MB)
+          </p>
+        </div>
+        {/* Parser Option Selection */}
+        <div>
+          <label htmlFor="parser_option" className="block text-sm font-medium text-gray-700">
+            Parser Option
+          </label>
+          <div className="mt-1">
+            <select
+              id="parser_option"
+              name="parser_option"
+              value={parserOption}
+              onChange={(e) => setParserOption(e.target.value)}
+              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+            >
+              <option value="enhanced_parser">Enhanced Parser</option>
+            </select>
+          </div>
+          <p className="mt-1 text-sm text-gray-500">
+            Select the parsing method to use
+          </p>
+        </div>
+        {/* Submit Button */}
+        <div>
+          <button
+            type="submit"
+            disabled={isSubmitting}
+            className={`w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white ${
+              isSubmitting
+                ? 'bg-blue-400 cursor-not-allowed'
+                : 'bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500'
+            }`}
+          >
+            {isSubmitting ? 'Processing...' : 'Start Parsing'}
+          </button>
+        </div>
       </div>
-      <div className="mb-4">
-        <label htmlFor="document_image" className="block text-gray-700">
-          Document Image
-        </label>
-        <input
-          type="file"
-          id="document_image"
-          accept="image/*"
-          onChange={(e) => setDocumentImage(e.target.files[0])}
-          className="w-full mt-2"
-        />
-      </div>
-      <div className="mb-4">
-        <label htmlFor="parser_option" className="block text-gray-700">
-          Parser Option
-        </label>
-        <select
-          id="parser_option"
-          value={parserOption}
-          onChange={(e) => setParserOption(e.target.value)}
-          className="w-full mt-2 p-2 border rounded"
-          required
-        >
-          <option value="">Select a parser option</option>
-          <option value="option1">Option 1</option>
-          <option value="option2">Option 2</option>
-          {/* Add more options as needed */}
-        </select>
-      </div>
-      <button type="submit" className="bg-blue-500 text-white px-4 py-2 rounded">
-        Start Parsing
-      </button>
     </form>
   );
 };
 export default ParserForm;
-
 
 
 
@@ -398,30 +633,39 @@ const ResultViewer = () => {
     <div className="mt-6 bg-white p-6 rounded shadow-md">
       <div className="flex justify-between items-center mb-4">
         <h2 className="text-xl font-bold">Parsed Results</h2>
-        <div>
-          <button
-            onClick={() => setView('human')}
-            className={`mr-2 px-3 py-1 rounded ${view === 'human' ? 'bg-blue-500 text-white' : 'bg-gray-200'}`}
-          >
-            Human Readable
-          </button>
-          <button
-            onClick={() => setView('json')}
-            className={`mr-2 px-3 py-1 rounded ${view === 'json' ? 'bg-blue-500 text-white' : 'bg-gray-200'}`}
-          >
-            JSON
-          </button>
-          <button
-            onClick={() => setView('original')}
-            className={`px-3 py-1 rounded ${view === 'original' ? 'bg-blue-500 text-white' : 'bg-gray-200'}`}
-          >
-            Original
-          </button>
+        <div className="flex items-center">
+          {['human', 'json', 'original'].map((type) => (
+            <button
+              key={type}
+              onClick={() => setView(type)}
+              className={`mr-2 px-3 py-1 rounded transition-colors duration-200 ${
+                view === type ? 'bg-blue-500 text-white' : 'bg-gray-200 hover:bg-gray-300'
+              }`}
+              aria-pressed={view === type}
+              aria-label={`View parsed results as ${type}`}
+            >
+              {type.charAt(0).toUpperCase() + type.slice(1)}
+            </button>
+          ))}
         </div>
       </div>
-      {view === 'human' && <HumanReadable data={parsingResult} />}
-      {view === 'json' && <JsonView data={parsingResult} />}
-      {view === 'original' && <OriginalView data={parsingResult} />}
+      <div className="mb-4">
+        {view === 'human' && (
+          <React.Suspense fallback={<p>Loading Human Readable View...</p>}>
+            <HumanReadable data={parsingResult} />
+          </React.Suspense>
+        )}
+        {view === 'json' && (
+          <React.Suspense fallback={<p>Loading JSON View...</p>}>
+            <JsonView data={parsingResult} />
+          </React.Suspense>
+        )}
+        {view === 'original' && (
+          <React.Suspense fallback={<p>Loading Original View...</p>}>
+            <OriginalView data={parsingResult} />
+          </React.Suspense>
+        )}
+      </div>
       <DownloadButton data={parsingResult} />
     </div>
   );
@@ -440,10 +684,24 @@ export default ResultViewer;
 const rootReducer = combineReducers({
   parsing: parsingReducer,
 });
+// Custom middleware to handle and log errors during action dispatching
+const errorHandlingMiddleware = (store) => (next) => (action) => {
+  try {
+    return next(action);
+  } catch (error) {
+    console.error('Error during action dispatch:', action, error);
+    return store.dispatch({ type: 'SET_ERROR', payload: 'Something went wrong during state update.' });
+  }
+};
+// Enable Redux DevTools Extension if available, with fallback for compose
+const composeEnhancers = window.__REDUX_DEVTOOLS_EXTENSION_COMPOSE__ || compose;
 /**
- * Redux store configured with thunk middleware.
+ * Redux store configured with thunk middleware, error handling, and DevTools extension.
  */
-const store = createStore(rootReducer, applyMiddleware(thunk));
+const store = createStore(
+  rootReducer,
+  composeEnhancers(applyMiddleware(thunk, errorHandlingMiddleware))
+);
 export default store;
 
 
@@ -453,58 +711,83 @@ export default store;
 
 // frontend/reducers/parsingReducer.js
 const initialState = {
-    parsingProgress: null, // { stage: string, percentage: number }
-    parsingResult: null, // Parsed data
-    error: null, // Error messages
-    toasts: [], // Array of toast notifications
-  };
-  /**
-   * Parsing reducer handles actions related to parsing progress and results.
-   * @param {Object} state - Current state.
-   * @param {Object} action - Dispatched action.
-   * @returns {Object} - New state.
-   */
-  const parsingReducer = (state = initialState, action) => {
-    switch (action.type) {
-      case 'START_PARSING':
+  parsingProgress: null, // { stage: string, percentage: number }
+  parsingResult: null, // Parsed data
+  error: null, // Error messages
+  toasts: [], // Array of toast notifications
+};
+/**
+ * Parsing reducer handles actions related to parsing progress and results.
+ * @param {Object} state - Current state.
+ * @param {Object} action - Dispatched action.
+ * @returns {Object} - New state.
+ */
+const parsingReducer = (state = initialState, action) => {
+  switch (action.type) {
+    case 'START_PARSING':
+      return {
+        ...state,
+        parsingProgress: { stage: 'Starting', percentage: 0 },
+        parsingResult: null,
+        error: null,
+      };
+    case 'UPDATE_PROGRESS':
+      if (action.payload && action.payload.percentage >= 0 && action.payload.percentage <= 100) {
         return {
           ...state,
-          parsingProgress: { stage: 'Starting', percentage: 0 },
-          parsingResult: null,
-          error: null,
+          parsingProgress: {
+            stage: action.payload.stage || 'In Progress',
+            percentage: action.payload.percentage,
+          },
         };
-      case 'UPDATE_PROGRESS':
+      } else {
+        console.error('Invalid progress update received:', action.payload);
         return {
           ...state,
-          parsingProgress: action.payload,
+          error: 'Received an invalid progress update.',
         };
-      case 'COMPLETE_PARSING':
+      }
+    case 'COMPLETE_PARSING':
+      if (action.payload) {
         return {
           ...state,
           parsingProgress: null,
           parsingResult: action.payload,
         };
-      case 'SET_ERROR':
+      } else {
+        console.error('Invalid parsing result received:', action.payload);
         return {
           ...state,
-          parsingProgress: null,
-          error: action.payload,
+          error: 'Failed to complete parsing. Invalid data received.',
         };
-      case 'ADD_TOAST':
+      }
+    case 'SET_ERROR':
+      return {
+        ...state,
+        parsingProgress: null,
+        parsingResult: null, // Clear any previous results on error
+        error: action.payload || 'An unknown error occurred.',
+      };
+    case 'ADD_TOAST':
+      if (action.payload && !state.toasts.some((toast) => toast.id === action.payload.id)) {
         return {
           ...state,
           toasts: [...state.toasts, action.payload],
         };
-      case 'REMOVE_TOAST':
-        return {
-          ...state,
-          toasts: state.toasts.filter((toast) => toast.id !== action.payload),
-        };
-      default:
+      } else {
+        console.warn('Attempted to add a duplicate or invalid toast:', action.payload);
         return state;
-    }
-  };
-  export default parsingReducer;
+      }
+    case 'REMOVE_TOAST':
+      return {
+        ...state,
+        toasts: state.toasts.filter((toast) => toast.id !== action.payload),
+      };
+    default:
+      return state;
+  }
+};
+export default parsingReducer;
 
 
 
@@ -515,7 +798,7 @@ const initialState = {
 /* Basic styles for the application */
 body {
     font-family: Arial, sans-serif;
-    background-color: #f9fafb;
+    background-color: #00356a;
   }
   .container {
     max-width: 800px;
@@ -536,15 +819,44 @@ body {
  * @returns {Object} - Validation result with isValid flag and message.
  */
 export const validateForm = (inputs) => {
-    const { parser_option, email_content, document_image } = inputs;
-    if (!parser_option) {
-      return { isValid: false, message: 'Please select a parser option.' };
+  const { parser_option, email_content, document_image } = inputs;
+  // Validate parser_option
+  if (!parser_option) {
+    return { isValid: false, message: 'Please select a parser option.' };
+  }
+  // Validate email_content or document_image presence
+  if (!email_content && !document_image) {
+    return { isValid: false, message: 'Please provide email content or a document image.' };
+  }
+  // Validate email_content type and length
+  if (email_content) {
+    if (typeof email_content !== 'string') {
+      return { isValid: false, message: 'Email content must be a valid text string.' };
     }
-    if (!email_content && !document_image) {
-      return { isValid: false, message: 'Please provide email content or a document image.' };
+    if (email_content.trim().length === 0) {
+      return { isValid: false, message: 'Email content cannot be empty.' };
     }
-    return { isValid: true, message: '' };
-  };
+    if (email_content.trim().length > 5000) {
+      return { isValid: false, message: 'Email content is too long. Please limit it to 5000 characters.' };
+    }
+  }
+  // Validate document_image type and size
+  if (document_image) {
+    if (!(document_image instanceof File)) {
+      return { isValid: false, message: 'Document image must be a valid file.' };
+    }
+    const validImageTypes = ['image/jpeg', 'image/png'];
+    if (!validImageTypes.includes(document_image.type)) {
+      return { isValid: false, message: 'Invalid image type. Please upload a JPEG or PNG image.' };
+    }
+    const maxSizeInBytes = 5 * 1024 * 1024; // 5MB
+    if (document_image.size > maxSizeInBytes) {
+      return { isValid: false, message: 'Document image size should not exceed 5MB.' };
+    }
+  }
+  // If all validations pass
+  return { isValid: true, message: '' };
+};
 
 
 
@@ -558,27 +870,66 @@ export const validateForm = (inputs) => {
  * @param {Function} dispatch - Redux dispatch function.
  */
 export const setupSocketListeners = (socket, dispatch) => {
-  socket.on('parsing_started', (data) => {
-    const toastId = Date.now();
-    dispatch(addToast({ id: toastId, message: 'Parsing started', type: 'success' }));
-    // Remove toast after 3 seconds
-    setTimeout(() => dispatch(removeToast(toastId)), 3000);
-  });
-  socket.on('parsing_progress', (data) => {
-    dispatch(updateProgress(data));
-  });
-  socket.on('parsing_completed', (data) => {
-    dispatch(completeParsing(data.result));
-    const toastId = Date.now();
-    dispatch(addToast({ id: toastId, message: 'Parsing completed', type: 'success' }));
-    setTimeout(() => dispatch(removeToast(toastId)), 3000);
-  });
-  socket.on('parsing_error', (data) => {
-    dispatch(setError(data.error));
-    const toastId = Date.now();
-    dispatch(addToast({ id: toastId, message: `Error: ${data.error}`, type: 'error' }));
-    setTimeout(() => dispatch(removeToast(toastId)), 3000);
-  });
+  if (!socket || typeof socket.on !== 'function') {
+    console.error("Invalid socket instance provided.");
+    dispatch(setError('Socket connection error. Please refresh and try again.'));
+    return;
+  }
+  try {
+    socket.on('parsing_started', (data) => {
+      try {
+        const toastId = Date.now();
+        dispatch(addToast({ id: toastId, message: 'Parsing started', type: 'success' }));
+        // Remove toast after 3 seconds
+        setTimeout(() => dispatch(removeToast(toastId)), 3000);
+      } catch (err) {
+        console.error("Error handling 'parsing_started' event: ", err);
+        dispatch(setError('An error occurred while starting the parsing process.'));
+      }
+    });
+    socket.on('parsing_progress', (data) => {
+      try {
+        if (!data || typeof data.progress === 'undefined') {
+          throw new Error('Invalid progress data received.');
+        }
+        dispatch(updateProgress(data));
+      } catch (err) {
+        console.error("Error handling 'parsing_progress' event: ", err);
+        dispatch(setError('An error occurred while updating parsing progress.'));
+      }
+    });
+    socket.on('parsing_completed', (data) => {
+      try {
+        if (!data || !data.result) {
+          throw new Error('Invalid completion data received.');
+        }
+        dispatch(completeParsing(data.result));
+        const toastId = Date.now();
+        dispatch(addToast({ id: toastId, message: 'Parsing completed', type: 'success' }));
+        setTimeout(() => dispatch(removeToast(toastId)), 3000);
+      } catch (err) {
+        console.error("Error handling 'parsing_completed' event: ", err);
+        dispatch(setError('An error occurred while completing the parsing process.'));
+      }
+    });
+    socket.on('parsing_error', (data) => {
+      try {
+        if (!data || !data.error) {
+          throw new Error('Invalid error data received.');
+        }
+        dispatch(setError(data.error));
+        const toastId = Date.now();
+        dispatch(addToast({ id: toastId, message: `Error: ${data.error}`, type: 'error' }));
+        setTimeout(() => dispatch(removeToast(toastId)), 3000);
+      } catch (err) {
+        console.error("Error handling 'parsing_error' event: ", err);
+        dispatch(setError('An unexpected error occurred during parsing.'));
+      }
+    });
+  } catch (err) {
+    console.error("Error setting up socket listeners: ", err);
+    dispatch(setError('Failed to setup socket listeners. Please try again.'));
+  }
 };
 
 
@@ -593,25 +944,40 @@ export const setupSocketListeners = (socket, dispatch) => {
  * @returns {Promise<Object>} - The response from the backend.
  */
 export const parseEmail = async (data) => {
-  const formData = new FormData();
-  if (data.email_content) formData.append('email_content', data.email_content);
-  if (data.document_image) formData.append('document_image', data.document_image);
-  formData.append('parser_option', data.parser_option);
-  formData.append('socket_id', data.socket_id);
-  const response = await axios.post('/api/parse_email', formData, {
-    headers: {
-      'Content-Type': 'multipart/form-data',
-    },
-  });
-  return response.data;
-};
-/**
- * Checks the health of the backend API.
- * @returns {Promise<Object>} - The health status.
- */
-export const checkHealth = async () => {
-  const response = await axios.get('/api/health');
-  return response.data;
+  try {
+    const formData = new FormData();
+    if (data.email_content) formData.append('email_content', data.email_content);
+    if (data.document_image) formData.append('document_image', data.document_image);
+    formData.append('parser_option', data.parser_option);
+    formData.append('socket_id', data.socket_id);
+    const response = await axios.post('/api/parse_email', formData, {
+      // Remove the 'Content-Type' header
+      // Axios will set it automatically, including the correct boundary
+    });
+    return response.data;
+  } catch (error) {
+    console.error('Error occurred during email parsing request:', error);
+    if (error.response) {
+      // Server responded with a status code outside of 2xx range
+      return {
+        success: false,
+        message: `Parsing failed: ${error.response.data?.message || 'Unknown server error'}`,
+        status: error.response.status,
+      };
+    } else if (error.request) {
+      // Request was made but no response was received
+      return {
+        success: false,
+        message: 'No response received from the server. Please check your network connection.',
+      };
+    } else {
+      // Something else happened while setting up the request
+      return {
+        success: false,
+        message: `Request setup error: ${error.message}`,
+      };
+    }
+  }
 };
 
 
@@ -627,52 +993,117 @@ export const checkHealth = async () => {
 export const startParsing = (data) => async (dispatch) => {
   dispatch({ type: 'START_PARSING' });
   try {
-    await parseEmailAPI(data);
-    // Parsing is handled via WebSocket events
+    // Generate a unique socket ID for this session if not provided
+    const socketId = data.socket_id || generateId();
+    const socket = socketIOClient('http://localhost:8080', {
+      path: '/socket.io',
+      transports: ['websocket', 'polling'],
+    });
+    setupSocketListeners(socket, dispatch); // Attach listeners for socket events
+        // Ensure socket is connected
+        if (!socket.connected) {
+          throw new Error('Socket is not connected.');
+        }
+    await parseEmailAPI({ ...data, socket_id: socketId });
+    // Parsing is handled via WebSocket events, no need to wait for response from parseEmailAPI
   } catch (error) {
-    dispatch({ type: 'SET_ERROR', payload: error.response?.data?.error_message || 'Parsing failed.' });
+    console.error('Error during parsing start:', error);
+    dispatch({
+      type: 'SET_ERROR',
+      payload: error.response?.data?.error_message || 'Parsing failed. Please try again.',
+    });
   }
 };
 /**
  * Action to update parsing progress.
  * @param {Object} progress - Progress data.
  */
-export const updateProgress = (progress) => ({
-  type: 'UPDATE_PROGRESS',
-  payload: progress,
-});
+export const updateProgress = (progress) => {
+  try {
+    return {
+      type: 'UPDATE_PROGRESS',
+      payload: progress,
+    };
+  } catch (error) {
+    console.error('Error updating parsing progress:', error);
+    return {
+      type: 'SET_ERROR',
+      payload: 'Failed to update progress.',
+    };
+  }
+};
 /**
  * Action to complete parsing with results.
  * @param {Object} result - Parsed data.
  */
-export const completeParsing = (result) => ({
-  type: 'COMPLETE_PARSING',
-  payload: result,
-});
+export const completeParsing = (result) => {
+  try {
+    return {
+      type: 'COMPLETE_PARSING',
+      payload: result,
+    };
+  } catch (error) {
+    console.error('Error completing parsing:', error);
+    return {
+      type: 'SET_ERROR',
+      payload: 'Failed to complete parsing process.',
+    };
+  }
+};
 /**
  * Action to set an error message.
  * @param {string} error - Error message.
  */
-export const setError = (error) => ({
-  type: 'SET_ERROR',
-  payload: error,
-});
+export const setError = (error) => {
+  try {
+    return {
+      type: 'SET_ERROR',
+      payload: error,
+    };
+  } catch (error) {
+    console.error('Error setting error message:', error);
+    return {
+      type: 'SET_ERROR',
+      payload: 'An unknown error occurred while setting the error message.',
+    };
+  }
+};
 /**
  * Action to add a toast notification.
  * @param {Object} toast - Toast data.
  */
-export const addToast = (toast) => ({
-  type: 'ADD_TOAST',
-  payload: toast,
-});
+export const addToast = (toast) => {
+  try {
+    return {
+      type: 'ADD_TOAST',
+      payload: toast,
+    };
+  } catch (error) {
+    console.error('Error adding toast notification:', error);
+    return {
+      type: 'SET_ERROR',
+      payload: 'Failed to add toast notification.',
+    };
+  }
+};
 /**
  * Action to remove a toast notification.
  * @param {string} id - Toast ID to remove.
  */
-export const removeToast = (id) => ({
-  type: 'REMOVE_TOAST',
-  payload: id,
-});
+export const removeToast = (id) => {
+  try {
+    return {
+      type: 'REMOVE_TOAST',
+      payload: id,
+    };
+  } catch (error) {
+    console.error('Error removing toast notification:', error);
+    return {
+      type: 'SET_ERROR',
+      payload: 'Failed to remove toast notification.',
+    };
+  }
+};
 
 
 
@@ -684,7 +1115,14 @@ export const removeToast = (id) => ({
  * Generates a unique identifier.
  * @returns {string} - A UUID.
  */
-export const generateId = () => uuidv4();
+export const generateId = () => {
+  try {
+    return uuidv4();
+  } catch (error) {
+    console.error('Error generating UUID:', error);
+    return null; // Return null if there's an error
+  }
+};
 /**
  * Formats data into JSON or human-readable string.
  * @param {Object} data - The data to format.
@@ -692,11 +1130,24 @@ export const generateId = () => uuidv4();
  * @returns {string} - Formatted string.
  */
 export const formatData = (data, format) => {
-  if (format === 'json') {
-    return JSON.stringify(data, null, 2);
+  try {
+    if (!data || typeof data !== 'object') {
+      throw new Error('Invalid data provided for formatting');
+    }
+    if (format === 'json') {
+      return JSON.stringify(data, null, 2);
+    }
+    if (format === 'human') {
+      // Formatting the data into a human-readable string
+      return Object.entries(data)
+        .map(([key, value]) => `${key}: ${typeof value === 'object' ? JSON.stringify(value, null, 2) : value}`)
+        .join('\n');
+    }
+    throw new Error(`Unknown format: ${format}`);
+  } catch (error) {
+    console.error('Error formatting data:', error);
+    return 'Formatting error: Unable to format data.';
   }
-  // Implement human-readable formatting as needed
-  return JSON.stringify(data, null, 2); // Placeholder
 };
 
 
@@ -705,10 +1156,31 @@ export const formatData = (data, format) => {
 # -------------------- C:\Users\jorda\OneDrive\Desktop\Quickbase Dev Work\KeystoneEmailParser\frontend\utils\socket.js --------------------
 
 // frontend/utils/socket.js
-// Initialize the Socket.IO client
-const socket = io('/', { // Adjust the URL if needed
-  path: '/socket.io', // Ensure the path matches the backend
-  transports: ['websocket', 'polling'], // Specify transports
+const socket = io('http://localhost:5000', {
+  path: '/socket.io',
+  transports: ['websocket', 'polling']
+});
+// Event listener for socket connection errors
+socket.on('connect_error', (error) => {
+  console.error('Socket connection error:', error);
+  // Here, you could potentially add more user-facing error handling like a dispatch or notification
+});
+// Event listener for socket reconnection attempts
+socket.on('reconnect_attempt', (attemptNumber) => {
+  console.warn(`Reconnection attempt #${attemptNumber}`);
+});
+// Event listener for successful reconnection
+socket.on('reconnect', (attemptNumber) => {
+  console.info(`Reconnected successfully after ${attemptNumber} attempt(s)`);
+});
+// Event listener for connection establishment
+socket.on('connect', () => {
+  console.info('Socket connection established successfully');
+});
+// Event listener for disconnection
+socket.on('disconnect', (reason) => {
+  console.warn(`Socket disconnected: ${reason}`);
+  // Optionally, handle reconnection logic here if you want a specific response on disconnection
 });
 export default socket;
 
@@ -749,390 +1221,3 @@ class EnhancedParser(BaseParser):
         self.llama_model = None
         self.loop: Optional[asyncio.AbstractEventLoop] = None
         self.executor: Optional[ThreadPoolExecutor] = None
-        self.data_merger: DataMerger = DataMerger(self.logger)
-        self.timeouts = self._set_timeouts()
-        self.input_type = None
-        self._initialize_event_loop()
-        self._is_initialized = False
-    def _init_core_attributes(
-        self,
-        config: Optional[Dict[str, Any]],
-        socketio: Optional[Any],
-        sid: Optional[str],
-        logger: Optional[logging.Logger],
-    ):
-        Config.initialize()
-        self.logger: logging.Logger = logger or self._setup_logging()
-        self.socketio = socketio
-        self.sid = sid
-    def _initialize_event_loop(self) -> None:
-        """Initialize the asyncio event loop in a thread-safe manner."""
-        try:
-            if self.loop is None or self.loop.is_closed():
-                self.loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(self.loop)
-            self.logger.debug("Event loop initialized successfully")
-        except Exception as e:
-            self.logger.error("Failed to initialize asyncio loop", exc_info=True)
-            raise InitializationError(f"Asyncio loop initialization failed: {e}") from e
-        async def parse_async(
-            self,
-            email_content: Optional[str] = None,
-            document_image: Optional[Union[str, Image.Image]] = None,
-        ) -> Dict[str, Any]:
-            if self.loop is None:
-                self.logger.error("Asyncio event loop is not initialized.")
-                return {}
-            return await self.loop.run_in_executor(
-                self.executor, self.parse, email_content, document_image
-            )
-    @property
-    def is_initialized(self) -> bool:
-        """Check if the parser is fully initialized."""
-        return self._is_initialized
-    def initialize(self, input_type: str = "text") -> None:
-        """
-        Initialize the parser with the specified input type.
-        """
-        try:
-            self.input_type = input_type
-            if not self._is_initialized:
-                with self.lock:
-                    self._initialize_executor()
-                    self._initialize_models(input_type)
-                    if self.socketio and self.sid:
-                        self.progress_emitter = ParsingProgressEmitter(self.socketio, self.sid)
-                    self._is_initialized = True
-                    self.logger.info(
-                        "Parser initialized successfully for input type: %s", input_type
-                    )
-        except Exception as e:
-            self.logger.error("Failed to initialize parser: %s", e, exc_info=True)
-            raise InitializationError(f"Parser initialization failed: {e}") from e
-    def parse_email(
-        self,
-        email_content: Optional[str] = None,
-        document_image: Optional[Image.Image] = None,
-    ) -> Dict[str, Any]:
-        """
-        Parse email content with real-time progress updates.
-        """
-        parsed_data = {}
-        try:
-            if self.progress_emitter and email_content:
-                # Count approximate number of lines for progress tracking
-                total_lines = len(email_content.splitlines())
-                self.progress_emitter.emit_parsing_started(total_lines)
-            # Parse the email content or image
-            parsed_data = self.parse(email_content, document_image)
-            # Validate the parsed data
-            is_valid, errors = validate_json(parsed_data)
-            if not is_valid:
-                self.logger.warning("Validation failed. Proceeding with partial results.")
-                parsed_data["validation_issues"] = errors
-                if self.progress_emitter:
-                    self.progress_emitter.emit_parsing_error(
-                        "Validation issues found",
-                        {"validation_issues": errors}
-                    )
-            # Emit completion event
-            if self.progress_emitter:
-                self.progress_emitter.emit_parsing_complete({
-                    "total_sections": len(parsed_data),
-                    "validation_status": "valid" if is_valid else "invalid",
-                    "timestamp": datetime.now().isoformat()
-                })
-        except Exception as e:
-            self.logger.error("Error during email parsing: %s", e)
-            parsed_data["parsing_error"] = str(e)
-            if self.progress_emitter:
-                self.progress_emitter.emit_parsing_error(str(e))
-        return parsed_data
-    def parse(
-        self,
-        email_content: Optional[str] = None,
-        document_image: Optional[Union[str, Image.Image]] = None,
-    ) -> Dict[str, Any]:
-        self.logger.info("Starting parsing process.")
-        parsed_data: Dict[str, Any] = {}
-        input_type = self._detect_input_type(email_content, document_image)
-        try:
-            with self.lock:
-                self._initialize_executor()
-                self._initialize_models(input_type)
-            stages = self._get_parsing_stages(
-                email_content, document_image, parsed_data
-            )
-            for stage in stages:
-                parsed_data = self._process_parsing_stage(stage, parsed_data)
-            return parsed_data
-        except Exception as e:
-            self.logger.error("Error during parsing: %s", e, exc_info=True)
-            return self._handle_parsing_error(e, parsed_data)
-        finally:
-            self.cleanup_resources()
-    def _detect_input_type(
-        self,
-        email_content: Optional[str],
-        document_image: Optional[Union[str, Image.Image]],
-    ) -> str:
-        if email_content and document_image:
-            return "both"
-        elif email_content:
-            return "text"
-        elif document_image:
-            return "image"
-        else:
-            # Log and handle the "none" input type case
-            self.logger.error("Both email_content and document_image are missing.")
-            return "none"
-    def _initialize_executor(self):
-        if not self.executor:
-            self.executor = ThreadPoolExecutor(
-                max_workers=self._determine_thread_count()
-            )
-            self.logger.debug("ThreadPoolExecutor initialized.")
-    def _initialize_models(self, input_type: str) -> None:
-        try:
-            if input_type in ["image", "both"] and not self.donut_model:
-                self.donut_processor, self.donut_model = self._initialize_with_retry(
-                    initialize_donut, self.logger, Config.get_model_config("donut")
-                )
-            if input_type in ["text", "both"] and not self.llama_model:
-                self.llama_model = self._initialize_with_retry(
-                    initialize_model_parser,
-                    self.logger,
-                    Config.get_model_config("llama"),
-                    prompt_templates=self._render_prompts(),
-                )
-            self.device = Config.get_device()
-        except InitializationError:
-            raise
-        except Exception as e:
-            self.logger.error("Failed to initialize models: %s", e, exc_info=True)
-            raise InitializationError(f"Model initialization failed: {e}") from e
-    def _check_environment_variables(self) -> None:
-        missing_vars = [var for var in self.REQUIRED_ENV_VARS if not os.getenv(var)]
-        if missing_vars:
-            self.logger.error(
-                "Missing required environment variables: %s",
-                ", ".join(missing_vars),
-            )
-            raise EnvironmentError(
-                f"Missing required environment variables: {', '.join(missing_vars)}"
-            )
-    def _setup_logging(self) -> logging.Logger:
-        logger = logging.getLogger("EnhancedParser")
-        if not logger.handlers:
-            handler = logging.StreamHandler()
-            formatter = logging.Formatter(
-                "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-            )
-            handler.setFormatter(formatter)
-            logger.addHandler(handler)
-            logger.setLevel(logging.DEBUG)
-        return logger
-    def _initialize_with_retry(self, init_func: Callable, *args, **kwargs) -> Any:
-        max_retries = kwargs.pop("max_retries", 3)
-        for attempt in range(max_retries):
-            try:
-                component = init_func(*args, **kwargs)
-                self.logger.debug(
-                    "Successfully initialized %s on attempt %d.",
-                    init_func.__name__,
-                    attempt + 1,
-                )
-                return component
-            except (ValueError, OSError, TypeError) as e:
-                # Log each attempt failure
-                self.logger.warning(
-                    "Initialization attempt %d for %s failed: %s. Retrying...",
-                    attempt + 1,
-                    init_func.__name__,
-                    e,
-                )
-                if attempt == max_retries - 1:
-                    self.logger.error(
-                        "Failed to initialize %s after %d attempts: %s",
-                        init_func.__name__,
-                        max_retries,
-                        e,
-                        exc_info=True,
-                    )
-                    raise InitializationError(
-                        f"Initialization failed for {init_func.__name__}: {e}"
-                    ) from e
-                torch.cuda.empty_cache()
-    def _determine_thread_count(self) -> int:
-        cpu_count = psutil.cpu_count(logical=True)
-        available_memory_gb = psutil.virtual_memory().available / (1024**3)
-        thread_count = min(
-            16,
-            cpu_count * 2,
-            int(available_memory_gb * 2),
-        )
-        self.logger.debug("Determined thread count: %d", thread_count)
-        return max(1, thread_count)
-    def _set_timeouts(self) -> Dict[str, int]:
-        """
-        Set timeouts for various processing stages from configuration.
-        Returns a dictionary of stage timeouts with fallback defaults.
-        """
-        try:
-            # Get stages configuration
-            stages_config = Config.get_full_config().get("stages", {})
-            # Set default timeouts
-            timeouts = {
-                "donut_parsing": 60,
-                "llama_text_extraction": 60,
-                "llama_validation": 45,
-                "llama_summarization": 30,
-                "post_processing": 30,
-                "json_validation": 30,
-            }
-            # Dynamically adjust timeouts based on model size or performance
-            model_size = self.config.get("model_size", "default")
-            if model_size == "large":
-                timeouts = {key: value * 2 for key, value in timeouts.items()}
-            elif model_size == "small":
-                timeouts = {key: value // 2 for key, value in timeouts.items()}
-            self.logger.debug("Initialized timeouts: %s", timeouts)
-            return timeouts
-        except Exception as e:
-            self.logger.error("Error setting timeouts, using defaults: %s", str(e))
-            return {
-                "donut_parsing": 60,
-                "llama_text_extraction": 60,
-                "llama_validation": 45,
-                "llama_summarization": 30,
-                "post_processing": 30,
-                "json_validation": 30,
-            }
-    def _render_prompts(self) -> Dict[str, str]:
-        prompts = {}
-        prompt_config = (
-            self.config.get("models", {}).get("llama", {}).get("prompt_templates", {})
-        )
-        for task, template in prompt_config.items():
-            if template:
-                data_points = Config.get_data_points()
-                template_obj = Template(template)
-                prompts[task] = template_obj.render(data_points=data_points)
-            else:
-                prompts[task] = ""
-        return prompts
-    def _get_parsing_stages(
-        self,
-        email_content: Optional[str],
-        document_image: Optional[Union[str, Image.Image]],
-        parsed_data: Dict[str, Any],
-    ) -> List[Tuple[str, Callable, Dict[str, Any]]]:
-        enabled_stages = Config.get_enabled_stages()
-        stages = []
-        if "Email Parsing" in enabled_stages and email_content:
-            stages.append(
-                (
-                    "Email Parsing",
-                    self._stage_email_parsing,
-                    {"email_content": email_content},
-                )
-            )
-        if "Donut Parsing" in enabled_stages and document_image:
-            stages.append(
-                (
-                    "Donut Parsing",
-                    self._stage_donut_parsing,
-                    {"document_image": document_image},
-                )
-            )
-        if "Text Extraction" in enabled_stages and email_content:
-            stages.append(
-                (
-                    "Text Extraction",
-                    self._stage_text_extraction,
-                    {"email_content": email_content},
-                )
-            )
-        if "Validation" in enabled_stages and email_content:
-            stages.append(
-                (
-                    "Validation",
-                    self._stage_validation,
-                    {"email_content": email_content, "parsed_data": parsed_data},
-                )
-            )
-        if "Summarization" in enabled_stages and email_content:
-            stages.append(
-                (
-                    "Summarization",
-                    self._stage_summarization,
-                    {"email_content": email_content, "parsed_data": parsed_data},
-                )
-            )
-        if "Post Processing" in enabled_stages and parsed_data:
-            stages.append(
-                (
-                    "Post Processing",
-                    self._stage_post_processing,
-                    {"parsed_data": parsed_data},
-                )
-            )
-        if "JSON Validation" in enabled_stages and parsed_data:
-            stages.append(
-                (
-                    "JSON Validation",
-                    self._stage_json_validation,
-                    {"parsed_data": parsed_data},
-                )
-            )
-        return stages
-    def _process_parsing_stage(
-        self,
-        stage: Tuple[str, Callable, Dict[str, Any]],
-        parsed_data: Dict[str, Any],
-    ) -> Dict[str, Any]:
-        stage_name, stage_method, kwargs = stage
-        self.logger.info("Starting stage: %s", stage_name)
-        try:
-            future = self.executor.submit(stage_method, **kwargs)
-            stage_result = future.result(timeout=self._get_stage_timeout(stage_name))
-            if isinstance(stage_result, dict) and stage_result:
-                parsed_data = self.data_merger.merge_parsed_data(
-                    parsed_data, stage_result
-                )
-            self.logger.info("Completed stage: %s", stage_name)
-            return parsed_data
-        except Exception as e:
-            # Log the error but continue with the next stage
-            self.logger.error(
-                "Error during stage '%s'. Continuing with partial results: %s", stage_name, e
-            )
-            return parsed_data  # Return what we have so far
-    def _get_stage_timeout(self, stage_name: str) -> int:
-        stage_key = stage_name.lower().replace(" ", "_")
-        return self.timeouts.get(stage_key, 60)
-    def _handle_parsing_error(
-        self, error: Exception, parsed_data: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        self.logger.error("Parsing process failed: %s", error, exc_info=True)
-        parsed_data["validation_issues"] = parsed_data.get("validation_issues", []) + [
-            str(error)
-        ]
-        return parsed_data
-    def _handle_stage_error(
-        self, stage_name: str, error: Exception, parsed_data: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        if isinstance(error, (ConcurrentTimeoutError, ParsingError, ValidationError)):
-            parsed_data["validation_issues"] = parsed_data.get(
-                "validation_issues", []
-            ) + [str(error)]
-        else:
-            parsed_data["validation_issues"] = parsed_data.get(
-                "validation_issues", []
-            ) + [f"Unexpected error in stage '{stage_name}': {error}"]
-        return parsed_data
-    def _stage_email_parsing(
-        self, email_content: Optional[str] = None
-    ) -> Dict[str, Any]:
-        if not email_content:
-            self.logger.warning("No email content provided for Email Parsing.")

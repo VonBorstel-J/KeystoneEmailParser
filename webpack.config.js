@@ -43,17 +43,26 @@ module.exports = (env, argv) => {
           changeOrigin: true,
           secure: false,
           pathRewrite: {'^/api': '/api'},
-          logLevel: 'debug'
+          logLevel: 'debug',
+          headers: {
+            Connection: 'keep-alive'
+          }
         },
         '/socket.io': {
-          target: 'http://127.0.0.1:5000',
+          target: 'http://localhost:5000',
           ws: true,
           changeOrigin: true,
-          timeout: 60000,
-          proxyTimeout: 60000,
-          logLevel: 'debug',
-        },
-      },
+          secure: false,
+          headers: {
+            'Access-Control-Allow-Origin': '*',
+          },
+          onProxyReqWs: (proxyReq, req, socket) => {
+            // Keep alive ping/pong
+            console.log('Proxying:', req.method, req.path, 'to', proxyReq.path);
+            socket.on('ping', () => socket.pong());
+          }
+        }
+      }
     },
     module: {
       rules: [
